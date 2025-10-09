@@ -1,0 +1,33 @@
+{
+  "scene": "overworld",
+  "unlocked": {},
+  "player": {
+    "who": "JINWOO",
+    "pos": [640.0, 360.0],
+    "level": 1,
+    "xp": 0,
+    "xp_to_next": 100,
+    "stat_points": 0,
+    "skill_points": 0,
+    "stats": {
+      "strength": 5,
+      "agility": 6,
+      "endurance": 6,
+      "defense": 3,
+      "intelligence": 4,
+      "precision": 2,
+      "crit_rate": 0.07,
+      "crit_damage": 1.6
+    },
+    "hp": 110,
+    "max_hp": 110,
+    "mp": 40,
+    "max_mp": 40,
+    "gold": 100,
+    "has_dagger": true,
+    "has_sword": false,
+    "equipped": "fists",
+    "hp_pots": 2,
+    "mp_pots": 2
+  }
+}
