@@ -16,6 +16,7 @@ from .constants import (
     PLAYER_SPEED,
     Keys,
 )
+from .inventory import ITEM_LIBRARY, Inventory, Item
 from .leveling import Leveling
 from .stats import Stats
 from .utils import clamp, load_anim_folder, vnorm
@@ -52,16 +53,20 @@ class Player(pygame.sprite.Sprite):
         self.move_intent = pygame.Vector2()
         self.facing: Facing = "left"
         self.state: PlayerState = "idle"
+        self.alive: bool = True
 
         # Core stats
         self.stats = Stats()
         self.leveling = Leveling()
-        self.max_hp: float = 100.0
+        self.base_max_hp: float = 100.0
+        self.max_hp: float = self.base_max_hp
         self.hp: float = self.max_hp
-        self.max_stamina: float = 100.0
+        self.base_max_stamina: float = 100.0
+        self.max_stamina: float = self.base_max_stamina
         self.stamina: float = self.max_stamina
         self.dash_cost: float = 20.0
         self.gold: int = 0
+        self.inventory = Inventory()
 
         # Legacy compat fields (used by other systems)
         self.radius = 16
@@ -102,6 +107,8 @@ class Player(pygame.sprite.Sprite):
         self._external_timer: float = 0.0
         self._invuln_timer: float = 0.0
         self._hurt_timer: float = 0.0
+
+        self.recalculate_stats()
 
     # ------------------------------------------------------------------
     # Input
@@ -146,6 +153,9 @@ class Player(pygame.sprite.Sprite):
         dt = float(dt)
         ms = dt * 1000.0
         prev_state = self.state
+
+        if not self.alive:
+            return
 
         self._invuln_timer = max(0.0, self._invuln_timer - dt)
         self._hurt_timer = max(0.0, self._hurt_timer - dt)
@@ -250,7 +260,7 @@ class Player(pygame.sprite.Sprite):
     def _spawn_attack_hitbox(self) -> None:
         size = pygame.Vector2(28, 20)
         rect = self._attack_rect_from_size(size)
-        damage = 14 + int(self.stats.strength * 0.5)
+        damage = self.attack_damage
         knockback = 180.0
         self._hitboxes.append(
             Hitbox(rect=rect, ttl_ms=ATTACK_HITBOX_MS, damage=damage, knockback=knockback, size=size)
@@ -376,7 +386,7 @@ class Player(pygame.sprite.Sprite):
     ) -> None:
         if self.intangible or self._invuln_timer > 0.0:
             return
-        self.hp = max(0, self.hp - int(max(1, amount)))
+        self.hp = clamp(self.hp - float(max(1, amount)), 0.0, self.max_hp)
         self._invuln_timer = 0.35
         self._hurt_timer = 0.2
         if knockback > 0:
@@ -389,15 +399,86 @@ class Player(pygame.sprite.Sprite):
             if direction.length_squared():
                 self._external_velocity = direction.normalize() * knockback
                 self._external_timer = 0.18
-        if self.hp <= 0:
-            self.state = "idle"
+        if self.hp <= 0 and self.alive:
+            self._on_death()
 
     def on_level_up(self) -> None:
         self.stats.strength += 1
         self.stats.endurance += 1
-        self.max_hp += 8
-        self.hp = self.max_hp
-        self.max_stamina = min(150.0, self.max_stamina + 5.0)
+        self.base_max_hp += 8
+        self.base_max_stamina = min(150.0, self.base_max_stamina + 5.0)
+        self.recalculate_stats(full_heal=True)
+
+    # ------------------------------------------------------------------
+    def _on_death(self) -> None:
+        self.alive = False
+        self.state = "idle"
+        self._attack_timer = 0.0
+        self._dash_timer = 0.0
+        self._hitboxes.clear()
+        self.intangible = False
+
+    def revive(self, pos: Optional[Iterable[float]] = None, full_heal: bool = True) -> None:
+        if pos is not None:
+            self.pos = pygame.Vector2(pos)
+        if full_heal:
+            self.hp = self.max_hp
+            self.stamina = self.max_stamina
+        else:
+            self.hp = clamp(self.hp, 1.0, self.max_hp)
+            self.stamina = clamp(self.stamina, 0.0, self.max_stamina)
+        self.alive = True
+        self.state = "idle"
+
+    @property
+    def attack_damage(self) -> int:
+        base = 14 + int(self.stats.strength * 0.5)
+        bonus = self.inventory.stat_bonuses().get("attack", 0)
+        return max(1, int(base + bonus))
+
+    @property
+    def weapon_item(self) -> Item:
+        equipped = self.inventory.equipped()
+        if "weapon" in equipped:
+            return equipped["weapon"]
+        return ITEM_LIBRARY["training_sword"]
+
+    def earn_gold(self, amount: int) -> None:
+        if amount <= 0:
+            return
+        self.gold += int(amount)
+
+    def spend_gold(self, amount: int) -> bool:
+        if amount <= 0 or self.gold < amount:
+            return False
+        self.gold -= amount
+        return True
+
+    def try_purchase(self, item_id: str) -> bool:
+        success, cost = self.inventory.purchase(item_id, self.gold)
+        if not success:
+            return False
+        if cost:
+            self.gold -= cost
+        self.recalculate_stats()
+        return True
+
+    def equip_item(self, item_id: str) -> bool:
+        item = self.inventory.equip(item_id)
+        if not item:
+            return False
+        self.recalculate_stats()
+        return True
+
+    def recalculate_stats(self, full_heal: bool = False) -> None:
+        bonuses = self.inventory.stat_bonuses()
+        self.max_hp = max(1.0, self.base_max_hp + bonuses.get("hp", 0.0))
+        self.max_stamina = max(10.0, self.base_max_stamina + bonuses.get("stamina", 0.0))
+        self.hp = clamp(self.hp, 0.0, self.max_hp)
+        self.stamina = clamp(self.stamina, 0.0, self.max_stamina)
+        if full_heal:
+            self.hp = self.max_hp
+            self.stamina = self.max_stamina
         self.stamina = self.max_stamina
 
     # Legacy shim helpers -----------------------------------------------

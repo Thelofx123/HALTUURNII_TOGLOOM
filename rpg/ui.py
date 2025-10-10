@@ -6,6 +6,7 @@ from typing import Optional
 import pygame
 
 from .constants import DASH_COOLDOWN_MS
+from .inventory import Inventory
 from .utils import load_pixel_font
 
 
@@ -48,15 +49,15 @@ class HudRenderer:
 
     def draw(self, surface: pygame.Surface, player, dash_cooldown: float) -> None:
         margin = 24
-        panel_height = 150
+        panel_height = 176
         panel_width = 260
         panel_top = surface.get_height() - margin - panel_height
         panel = pygame.Rect(margin, panel_top, panel_width, panel_height)
         self._draw_panel(surface, panel)
 
         bar_left = panel.x + 16
-        rect_hp = pygame.Rect(bar_left, panel.y + 18, panel.width - 32, 20)
-        rect_stamina = pygame.Rect(bar_left, rect_hp.bottom + 12, panel.width - 32, 14)
+        rect_hp = pygame.Rect(bar_left, panel.y + 24, panel.width - 32, 20)
+        rect_stamina = pygame.Rect(bar_left, rect_hp.bottom + 18, panel.width - 32, 14)
         self._draw_bar(surface, rect_hp, player.hp / max(1.0, player.max_hp), self.palette.hp_color)
         self._draw_bar(
             surface,
@@ -66,11 +67,11 @@ class HudRenderer:
         )
 
         hp_text = self.font.render(f"HP {int(player.hp)}/{int(player.max_hp)}", True, self.palette.outline)
-        surface.blit(hp_text, (bar_left, rect_hp.y - 18))
+        surface.blit(hp_text, (bar_left, rect_hp.y - 20))
         stamina_text = self.small.render(f"STM {player.stamina:05.1f}", True, self.palette.outline)
-        surface.blit(stamina_text, (bar_left, rect_stamina.y - 16))
+        surface.blit(stamina_text, (bar_left, rect_stamina.y - 18))
 
-        dash_rect = pygame.Rect(bar_left, rect_stamina.bottom + 16, panel.width - 32, 14)
+        dash_rect = pygame.Rect(bar_left, rect_stamina.bottom + 24, panel.width - 32, 14)
         pct = 1.0 - min(1.0, dash_cooldown / DASH_COOLDOWN) if DASH_COOLDOWN > 0 else 1.0
         dash_color = self.palette.dash_ready if pct >= 0.999 else self.palette.dash_wait
         self._draw_bar(surface, dash_rect, pct, dash_color)
@@ -84,7 +85,15 @@ class HudRenderer:
         xp = player.leveling.xp
         xp_to_next = player.leveling.xp_to_next
         xp_text = self.small.render(f"Lv {level}  XP {xp}/{xp_to_next}", True, self.palette.outline)
-        surface.blit(xp_text, (bar_left, dash_rect.bottom + 12))
+        xp_y = dash_rect.bottom + 16
+        surface.blit(xp_text, (bar_left, xp_y))
+
+        line_y = xp_y + xp_text.get_height() + 4
+        gold_text = self.small.render(f"Gold: {player.gold}", True, self.palette.outline)
+        surface.blit(gold_text, (bar_left, line_y))
+        line_y += gold_text.get_height() + 4
+        weapon_label = self.small.render(f"Weapon: {player.weapon_item.name}", True, self.palette.outline)
+        surface.blit(weapon_label, (bar_left, line_y))
 
         if self._level_up_timer > 0.0:
             text = self.big.render(self._level_up_text, True, self.palette.outline)
@@ -147,3 +156,101 @@ class HudRenderer:
         label = self.font.render(text, True, self.palette.panel_bg)
         label_rect = label.get_rect(center=base.center)
         surface.blit(label, label_rect)
+
+
+class InventoryOverlay:
+    """Simple overlay for purchasing and equipping inventory items."""
+
+    KEY_ORDER: tuple[int, ...] = (
+        pygame.K_1,
+        pygame.K_2,
+        pygame.K_3,
+        pygame.K_4,
+        pygame.K_5,
+        pygame.K_6,
+        pygame.K_7,
+        pygame.K_8,
+        pygame.K_9,
+        pygame.K_0,
+    )
+
+    def __init__(self) -> None:
+        self.font = load_pixel_font(18)
+        self.small = load_pixel_font(14)
+        self.header = load_pixel_font(24)
+        self._message = ""
+        self._message_timer = 0.0
+
+    def update(self, dt: float) -> None:
+        if self._message_timer > 0.0:
+            self._message_timer = max(0.0, self._message_timer - dt)
+            if self._message_timer == 0.0:
+                self._message = ""
+
+    def show_message(self, text: str) -> None:
+        self._message = text
+        self._message_timer = 2.0
+
+    @classmethod
+    def key_to_index(cls, key: int) -> Optional[int]:
+        try:
+            return cls.KEY_ORDER.index(key)
+        except ValueError:
+            return None
+
+    def draw(self, surface: pygame.Surface, inventory: Inventory, gold: int) -> None:
+        width = 440
+        height = 420
+        panel = pygame.Rect(36, surface.get_height() - height - 36, width, height)
+        shadow = panel.move(6, 8)
+        pygame.draw.rect(surface, (0, 0, 0, 160), shadow, border_radius=12)
+        pygame.draw.rect(surface, (24, 26, 34), panel, border_radius=12)
+        pygame.draw.rect(surface, (210, 210, 225), panel, 2, border_radius=12)
+
+        title = self.header.render("Inventory", True, (235, 235, 245))
+        surface.blit(title, (panel.x + 16, panel.y + 16))
+        gold_text = self.font.render(f"Gold {gold}", True, (220, 210, 245))
+        surface.blit(gold_text, (panel.x + panel.width - gold_text.get_width() - 20, panel.y + 20))
+
+        owned_ids = {item.id for item in inventory.owned()}
+        equipped = inventory.equipped()
+        items = inventory.catalogue()
+        line_y = panel.y + 64
+        line_height = 20
+
+        for index, item in enumerate(items):
+            number_label = "0" if index == 9 else str(index + 1)
+            label = f"[{number_label}] {item.name}"
+            label_surface = self.font.render(label, True, (235, 235, 245))
+            surface.blit(label_surface, (panel.x + 18, line_y))
+
+            status_parts: list[str] = []
+            if item.id in owned_ids:
+                status_parts.append("Owned")
+            if equipped.get(item.slot) and equipped[item.slot].id == item.id:
+                status_parts.append("Equipped")
+            if not status_parts:
+                status_parts.append(f"{item.price}G")
+            status = " / ".join(status_parts)
+            status_surface = self.small.render(status, True, (190, 190, 220))
+            surface.blit(status_surface, (panel.x + width - status_surface.get_width() - 20, line_y + 4))
+
+            info = f"+{item.attack_bonus} ATK" if item.attack_bonus else ""
+            if item.hp_bonus:
+                info += (", " if info else "") + f"+{int(item.hp_bonus)} HP"
+            if item.stamina_bonus:
+                info += (", " if info else "") + f"{item.stamina_bonus:+.0f} STM"
+            if not info:
+                info = item.description
+            info_surface = self.small.render(info, True, (150, 150, 190))
+            surface.blit(info_surface, (panel.x + 28, line_y + 18))
+
+            line_y += line_height + 12
+            if line_y > panel.bottom - 72:
+                break
+
+        hint = self.small.render("Press number to buy/equip, I to close", True, (210, 210, 230))
+        surface.blit(hint, (panel.x + 18, panel.bottom - 48))
+        if self._message:
+            msg = self.small.render(self._message, True, (255, 220, 160))
+            surface.blit(msg, (panel.x + 18, panel.bottom - 28))

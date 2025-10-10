@@ -9,7 +9,7 @@ from .base import SceneBase
 from ..constants import COL_BG, Keys
 from ..enemy import Enemy
 from ..gate import Gate
-from ..ui import HudRenderer
+from ..ui import HudRenderer, InventoryOverlay
 from ..utils import load_pixel_font
 
 
@@ -19,10 +19,13 @@ class SceneDungeon(SceneBase):
         self.player = player
         self.player.state = "idle"
         self.player.intangible = False
+        if not self.player.alive:
+            self.player.revive(full_heal=True)
         self._entry_gate = gate
         self._entry_return = pygame.Vector2(gate.rect.centerx, gate.rect.centery + self.player.size.y)
         self._spawn_point = pygame.Vector2(160, game.screen.get_height() // 2 + 80)
         self.player.pos = self._spawn_point.copy()
+        self.gate = gate
 
         self.bounds = pygame.Rect(0, 0, 960, 640)
         self.collision_sprites = pygame.sprite.Group()
@@ -42,9 +45,14 @@ class SceneDungeon(SceneBase):
         self.exit_gate = Gate(exit_rect, label=exit_label, allow_under=True)
 
         self.hud = HudRenderer()
+        self.inventory_overlay = InventoryOverlay()
         self._ui_font = load_pixel_font(16)
         self._frame_events: list[pygame.event.Event] = []
         self._cleared_timer: float = 0.0
+        self.inventory_open = False
+        self._status_message = ""
+        self._status_timer = 0.0
+        self._reward_granted = False
 
     # ------------------------------------------------------------------
     def _build_bounds(self) -> None:
@@ -76,6 +84,25 @@ class SceneDungeon(SceneBase):
     def handle(self, event: pygame.event.Event) -> None:
         self._frame_events.append(event)
         if event.type == pygame.KEYDOWN:
+            if event.key == Keys.INVENTORY:
+                self.inventory_open = not self.inventory_open
+                if not self.inventory_open:
+                    self.inventory_overlay.show_message("Closed inventory")
+                return
+            if self.inventory_open:
+                index = InventoryOverlay.key_to_index(event.key)
+                if index is not None:
+                    items = self.player.inventory.catalogue()
+                    if index < len(items):
+                        item = items[index]
+                        if self.player.inventory.is_owned(item.id):
+                            if self.player.equip_item(item.id):
+                                self.inventory_overlay.show_message(f"Equipped {item.name}")
+                        elif self.player.try_purchase(item.id):
+                            self.inventory_overlay.show_message(f"Purchased {item.name}")
+                        else:
+                            self.inventory_overlay.show_message("Not enough gold")
+                return
             if event.key == Keys.PAUSE:
                 from .overworld import SceneOverworld
 
@@ -90,7 +117,8 @@ class SceneDungeon(SceneBase):
     # ------------------------------------------------------------------
     def update(self, dt: float) -> None:
         keys = pygame.key.get_pressed()
-        self.player.handle_input(keys, self._frame_events)
+        if not self.inventory_open:
+            self.player.handle_input(keys, self._frame_events)
         self.player.update(dt, self.world)
         self._frame_events.clear()
 
@@ -108,14 +136,15 @@ class SceneDungeon(SceneBase):
         if self._cleared_timer > 0.0:
             self._cleared_timer = max(0.0, self._cleared_timer - dt)
             if self._cleared_timer == 0.0:
+                self._complete_gate()
                 self._leave_to_overworld()
 
-        if self.player.hp <= 0:
-            self.player.hp = self.player.max_hp
-            self.player.stamina = self.player.max_stamina
-            self._leave_to_overworld()
+        if not self.player.alive:
+            self._fail_gate()
 
         self.hud.update(dt)
+        self.inventory_overlay.update(dt)
+        self._tick_status(dt)
 
     # ------------------------------------------------------------------
     def draw(self, surf: pygame.Surface) -> None:
@@ -133,6 +162,11 @@ class SceneDungeon(SceneBase):
             surf.blit(prompt, (surf.get_width() // 2 - prompt.get_width() // 2, surf.get_height() - 72))
 
         self.hud.draw(surf, self.player, self.player.dash_cooldown)
+        if self.inventory_open:
+            self.inventory_overlay.draw(surf, self.player.inventory, self.player.gold)
+        if self._status_message:
+            msg = self._ui_font.render(self._status_message, True, (255, 210, 140))
+            surf.blit(msg, (surf.get_width() // 2 - msg.get_width() // 2, 40))
 
     # ------------------------------------------------------------------
     def _leave_to_overworld(self) -> None:
@@ -140,3 +174,34 @@ class SceneDungeon(SceneBase):
 
         self.player.pos = self._entry_return.copy()
         self.game.change(SceneOverworld(self.game), name="overworld")
+
+    def _complete_gate(self) -> None:
+        if self._reward_granted:
+            return
+        reward = self._entry_gate.reward_gold()
+        self.player.earn_gold(reward)
+        self._entry_gate.mark_cleared()
+        self._reward_granted = True
+        self._set_status(f"Gate cleared! +{reward}G")
+        if hasattr(self.game.state, "pending_status"):
+            self.game.state.pending_status = f"Gate cleared! +{reward}G"
+
+    def _fail_gate(self) -> None:
+        penalty = int(self.player.gold * 0.2)
+        if penalty:
+            self.player.gold = max(0, self.player.gold - penalty)
+        self.player.revive(self._entry_return, full_heal=True)
+        self._set_status("Defeated in gate" + (f" (-{penalty}G)" if penalty else ""))
+        if hasattr(self.game.state, "pending_status"):
+            self.game.state.pending_status = "Defeated in gate" + (f" (-{penalty}G)" if penalty else "")
+        self._leave_to_overworld()
+
+    def _set_status(self, text: str, duration: float = 2.5) -> None:
+        self._status_message = text
+        self._status_timer = duration
+
+    def _tick_status(self, dt: float) -> None:
+        if self._status_timer > 0.0:
+            self._status_timer = max(0.0, self._status_timer - dt)
+            if self._status_timer == 0.0:
+                self._status_message = ""
