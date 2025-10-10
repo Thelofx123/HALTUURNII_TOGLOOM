@@ -1,5 +1,9 @@
 
-import os, math, pygame
+import os
+import math
+from typing import Dict, Iterable, List
+
+import pygame
 from PIL import Image, ImageSequence
 
 
@@ -38,32 +42,40 @@ def dir8_index_from_vec(v: pygame.Vector2) -> int:
     ang = (math.degrees(math.atan2(v.y, v.x)) + 360.0) % 360.0
     return int((ang + 22.5) // 45) % 8
 
-def build_run4(paths: dict, scale=1.0, auto_flip=True, fallback_to_e=True):
+def _load_optional_frames(path: str | None, scale: float) -> List[pygame.Surface]:
+    if not path:
+        return []
+    if not os.path.isfile(path):
+        print(f"[warn] Missing sprite asset: {path}")
+        return []
+    return load_gif_frames(path, scale)
 
-    run = {}
+
+def _clone_frames(frames: Iterable[pygame.Surface]) -> List[pygame.Surface]:
+    return [f.copy() for f in frames]
+
+
+def build_run4(
+    paths: Dict[str, str | None],
+    scale: float = 1.0,
+    auto_flip: bool = True,
+    fallback_to_e: bool = True,
+) -> Dict[str, List[pygame.Surface]]:
+    run: Dict[str, List[pygame.Surface]] = {}
 
     # East
-    e_path = paths.get("E")
-    run["E"] = load_gif_frames(e_path, scale) if (e_path and os.path.isfile(e_path)) else []
+    run["E"] = _load_optional_frames(paths.get("E"), scale)
 
     # West
-    w_path = paths.get("W")
-    if w_path and os.path.isfile(w_path):
-        run["W"] = load_gif_frames(w_path, scale)
-    elif auto_flip and run["E"]:
+    run["W"] = _load_optional_frames(paths.get("W"), scale)
+    if not run["W"] and auto_flip and run["E"]:
         run["W"] = [pygame.transform.flip(f, True, False) for f in run["E"]]
-    else:
-        run["W"] = []
 
     # North / South
-    # for d in ("N", "S"):
-    #     p = paths.get(d)
-    #     if p and os.path.isfile(p):
-    #         run[d] = load_gif_frames(p, scale)
-    #     elif fallback_to_e and run["E"]:
-    #         run[d] = run["E"][:]  # reuse east frames as a fallback
-    #     else:
-    #         run[d] = []
+    for d in ("N", "S"):
+        run[d] = _load_optional_frames(paths.get(d), scale)
+        if not run[d] and fallback_to_e and run["E"]:
+            run[d] = _clone_frames(run["E"])
 
     return run
 

@@ -4,12 +4,13 @@ from ..constants import CHAR_JINWOO, CHAR_CHA
 from .overworld import SceneOverworld
 from ..player import Player
 from ..save import load_game
+from ..utils import load_pixel_font
 
 class SceneMenu(SceneBase):
     def __init__(self, game):
         super().__init__(game)
-        self.font = pygame.font.SysFont(None, 64)
-        self.small = pygame.font.SysFont(None, 32)
+        self.font = load_pixel_font(48)
+        self.small = load_pixel_font(22)
 
     def _spawn_player(self, who):
         p = Player((self.game.screen.get_width()//2, self.game.screen.get_height()//2), who=who)
@@ -38,4 +39,11 @@ class SceneMenu(SceneBase):
         t2 = self.small.render("[2] Cha Hae-In — Sword Dash (Q)", True, (255,230,180))
         surf.blit(t1, (surf.get_width()//2 - t1.get_width()//2, 260))
         surf.blit(t2, (surf.get_width()//2 - t2.get_width()//2, 300))
-        surf.blit(self.small.render("[L] Load last save  •  Esc: Quit", True, (200,200,210)), (surf.get_width()//2 - 180, 360))
+        surf.blit(
+            self.small.render("[L] Load last save  •  Esc: Quit", True, (200, 200, 210)),
+            (surf.get_width() // 2 - 180, 360),
+        )
+        surf.blit(
+            self.small.render("F5: Quick Save  •  F9: Quick Load", True, (195, 215, 235)),
+            (surf.get_width() // 2 - 160, 400),
+        )

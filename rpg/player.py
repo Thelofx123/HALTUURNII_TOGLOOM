@@ -1,286 +1,444 @@
-import os, math, pygame
-from .stats import Stats
-from .leveling import Leveling
-from .utils import clamp
-from .minion import Minion
+"""Player implementation with movement, animation, attacks, and dash."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Iterable, Literal, Optional
+
+import os
+import pygame
+
 from .constants import (
-    BASE_HP, HEALTH_PER_END, CHAR_JINWOO, CHAR_CHA,
-    DAMAGE_PUNCH, DAMAGE_SWORD, COOLDOWN_PUNCH, COOLDOWN_SWORD,
-    PUNCH_RANGE, SWORD_RANGE, Q_BURST_RANGE,
-    JIN_Q_COST, CHA_Q_COST, MINION_MAX
+    ATTACK_HITBOX_MS,
+    ATTACK_LOCK_MS,
+    DASH_COOLDOWN_MS,
+    DASH_DISTANCE,
+    DASH_TIME_MS,
+    PLAYER_SPEED,
+    Keys,
 )
-# sprite helpers
-from .sprites import split_8dir, load_gif_frames, build_run4, dir4_from_vec, dir8_index_from_vec, reorder_8
+from .leveling import Leveling
+from .stats import Stats
+from .utils import clamp, load_anim_folder, vnorm
 
-class Player:
-    BASE_SPEED = 240
+Facing = Literal["left", "right"]
+PlayerState = Literal["idle", "walk", "attack", "dash"]
 
-    def __init__(self, pos, who=CHAR_JINWOO):
+
+@dataclass
+class Hitbox:
+    rect: pygame.Rect
+    ttl_ms: float
+    damage: int
+    knockback: float
+    size: pygame.Vector2
+    follow_player: bool = True
+    hits: set[int] = field(default_factory=set)
+
+
+def _dash_speed() -> float:
+    return DASH_DISTANCE / max(0.001, (DASH_TIME_MS / 1000.0))
+
+
+class Player(pygame.sprite.Sprite):
+    """Main controllable hero character."""
+
+    size = pygame.Vector2(20, 28)
+
+    def __init__(self, pos: Iterable[float], who: str = "JINWOO") -> None:
+        super().__init__()
         self.who = who
         self.pos = pygame.Vector2(pos)
-        self.radius = 16
-        self.face = pygame.Vector2(1,0)
+        self.vel = pygame.Vector2()
+        self.move_intent = pygame.Vector2()
+        self.facing: Facing = "left"
+        self.state: PlayerState = "idle"
 
-        # core stats
-        self.stats = Stats(
-            strength=6 if who==CHAR_CHA else 5,
-            agility=6 if who==CHAR_JINWOO else 5,
-            endurance=6, defense=3, intelligence=4, precision=2, crit_rate=0.07, crit_damage=1.6
-        )
+        # Core stats
+        self.stats = Stats()
         self.leveling = Leveling()
-        self.hp = BASE_HP + self.stats.endurance * HEALTH_PER_END
-        self.max_hp = self.hp
-        self.mp = 40; self.max_mp = 40
-        self.gold = 100
+        self.max_hp: int = 100
+        self.hp: int = self.max_hp
+        self.max_stamina: float = 100.0
+        self.stamina: float = self.max_stamina
+        self.dash_cost: float = 20.0
+        self.gold: int = 0
 
-        self.has_dagger = True
-        self.has_sword  = (who==CHAR_CHA)
-        self.equipped   = "sword" if self.has_sword else "fists"
+        # Legacy compat fields (used by other systems)
+        self.radius = 16
+        self.face = pygame.Vector2(1, 0)
+        self.minions: list[object] = []
+        self.game_enemies: list[object] = []
+        self.has_dagger = False
+        self.has_sword = False
+        self.equipped = "fists"
+        self.hp_pots = 0
+        self.mp_pots = 0
+        self.mp = 50
+        self.max_mp = 50
 
-        self.attack_cd  = 0.0
-        self.dash_cd    = 0.0
-        self.shadow_cd  = 0.0
-        self.last_hit_preview = None
-
-        self.minions = []
-        self.hp_pots = 2
-        self.mp_pots = 2
-        self.game_enemies = []
-        
-        self.flip_ew = False 
-
-        self.hp_regen_rate = 2.0
-        self.mp_regen_rate = 1.0
-
-        assets = "assets/sprites/jinwoo" if self.who==CHAR_JINWOO else "assets/sprites/cha"
-
-        run_paths = {
-            "E": os.path.join(assets, "son_ji_woo_running-4-frames_west.gif"),
-            "W": os.path.join(assets, "son_ji_woo_running-4-frames_east.gif"),
-            "N": os.path.join(assets, "son_ji_woo_running-4-frames_north.gif"),
-            "S": os.path.join(assets, "son_ji_woo_running-4-frames_south.gif"),
+        # Animation
+        base_path = os.path.join("assets", "rpg", "player")
+        self.animations = {
+            "idle": load_anim_folder(os.path.join(base_path, "idle")),
+            "walk": load_anim_folder(os.path.join(base_path, "walk")),
+            "attack": load_anim_folder(os.path.join(base_path, "attack")),
         }
-        self.run4 = build_run4(run_paths, scale=1.0, auto_flip=False)
+        self.anim_timer: float = 0.0
+        self.frame_index: float = 0.0
+        self.image: Optional[pygame.Surface] = None
 
-        idle8_path = os.path.join(assets, "son_ji_woo_rotations_8dir.gif")
-        if os.path.isfile(idle8_path):
-            _idle_frames = split_8dir(load_gif_frames(idle8_path, 1.0))
-            IDLE_GIF_ORDER = ("S","SW","W","NW","N","NE","E","SE")
-            self.idle8 = reorder_8(_idle_frames, IDLE_GIF_ORDER)
+        # Action timers (seconds)
+        self._attack_timer: float = 0.0
+        self._dash_timer: float = 0.0
+        self._dash_cooldown: float = 0.0
+        self._dash_vector = pygame.Vector2()
+        self._attack_requested = False
+        self._dash_requested = False
+
+        self._hitboxes: list[Hitbox] = []
+        self.intangible: bool = False
+
+        self._external_velocity = pygame.Vector2()
+        self._external_timer: float = 0.0
+        self._invuln_timer: float = 0.0
+        self._hurt_timer: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Input
+    def handle_input(
+        self,
+        keys: pygame.key.ScancodeWrapper,
+        events: Iterable[pygame.event.Event],
+    ) -> None:
+        """Collect per-frame intent and queued actions."""
+
+        intent = pygame.Vector2(0, 0)
+        if keys[Keys.MOVE_UP]:
+            intent.y -= 1
+        if keys[Keys.MOVE_DOWN]:
+            intent.y += 1
+        if keys[Keys.MOVE_LEFT]:
+            intent.x -= 1
+        if keys[Keys.MOVE_RIGHT]:
+            intent.x += 1
+
+        horizontal = intent.x
+        self.move_intent = vnorm(intent)
+        if horizontal < 0:
+            self.facing = "left"
+        elif horizontal > 0:
+            self.facing = "right"
+
+        for event in events:
+            if event.type == pygame.KEYDOWN:
+                if event.key == Keys.ATTACK:
+                    self._attack_requested = True
+                if event.key == Keys.DASH:
+                    self._dash_requested = True
+
+        # Maintain legacy face vector for older systems.
+        self.face.xy = (1 if self.facing == "right" else -1, 0)
+
+    # ------------------------------------------------------------------
+    def update(self, dt: float, world) -> None:
+        """Advance simulation."""
+
+        dt = float(dt)
+        ms = dt * 1000.0
+        prev_state = self.state
+
+        self._invuln_timer = max(0.0, self._invuln_timer - dt)
+        self._hurt_timer = max(0.0, self._hurt_timer - dt)
+
+        self._update_dash(dt)
+        self._update_attack(dt)
+        self._update_movement(dt, world)
+        self._update_hitboxes(ms, getattr(world, "enemies", None))
+        self._update_state()
+
+        if self.state != prev_state:
+            self.anim_timer = 0.0
+        self._update_animation(dt)
+        self._recover_stamina(dt)
+        self._update_external_velocity(dt)
+
+    # ------------------------------------------------------------------
+    def _update_dash(self, dt: float) -> None:
+        self._dash_cooldown = max(0.0, self._dash_cooldown - dt)
+        if self._dash_timer > 0.0:
+            self._dash_timer = max(0.0, self._dash_timer - dt)
+            if self._dash_timer == 0.0:
+                self.intangible = False
+        elif self._dash_requested:
+            self._dash_requested = False
+            if self._dash_cooldown == 0.0 and self.stamina >= self.dash_cost and self.state != "attack":
+                dash_vec = (
+                    self.move_intent
+                    if self.move_intent.length_squared()
+                    else pygame.Vector2(1 if self.facing == "right" else -1, 0)
+                )
+                if dash_vec.length_squared() == 0:
+                    dash_vec = pygame.Vector2(1 if self.facing == "right" else -1, 0)
+                self._dash_vector = dash_vec.normalize()
+                self._dash_timer = DASH_TIME_MS / 1000.0
+                self._dash_cooldown = DASH_COOLDOWN_MS / 1000.0
+                self.intangible = True
+                self.state = "dash"
+                self.stamina = max(0.0, self.stamina - self.dash_cost)
+
+    def _update_attack(self, dt: float) -> None:
+        if self._attack_timer > 0.0:
+            self._attack_timer = max(0.0, self._attack_timer - dt)
+            if self._attack_timer == 0.0 and self.state == "attack":
+                self.state = "idle"
+        elif self._attack_requested and self.state != "dash":
+            self._attack_requested = False
+            self.state = "attack"
+            self._attack_timer = ATTACK_LOCK_MS / 1000.0
+            self._spawn_attack_hitbox()
+
+    def _update_movement(self, dt: float, world) -> None:
+        if self.state == "dash" and self._dash_timer > 0.0:
+            displacement = self._dash_vector * _dash_speed() * dt
+            self.pos += displacement
+            self._clamp_to_bounds(world)
+            return
+
+        if self.state == "attack" and self._attack_timer > 0.0:
+            self.vel.update(0, 0)
         else:
-            self.idle8 = [[]]*8
+            self.vel = self.move_intent * PLAYER_SPEED
 
-        pickup_path = os.path.join(assets, "son_ji_woo_picking-up_south.gif")
-        self.pickup8 = split_8dir(load_gif_frames(pickup_path, 1.0)) if os.path.isfile(pickup_path) else [[]]*8
+        collision_group = getattr(world, "collision_sprites", None)
+        if self.intangible or collision_group is None:
+            total_velocity = self.vel + self._external_velocity
+            self.pos += total_velocity * dt
+            self._clamp_to_bounds(world)
+            return
 
-        atk_sword = {
-            "E": os.path.join(assets, "son_ji_woo_lead-jab_west.gif"),  
-            "W": None, "N": None, "S": None
-        }
-        atk_fists = {
-            "E": os.path.join(assets, "son_ji_woo_lead-jab_east.gif"),
-            "W": None, "N": None, "S": None
-        }
-        self.attack4_sword = build_run4(atk_sword, scale=1.0, auto_flip=True)
-        self.attack4_fists = build_run4(atk_fists, scale=1.0, auto_flip=True)
+        self._move_axis(dt, collision_group, axis="x")
+        self._move_axis(dt, collision_group, axis="y")
+        self._clamp_to_bounds(world)
 
-        self.anim_state = "idle"   # idle | run | pickup | attack
-        self.anim_time  = 0.0
-        self.anim_frame = 0
-        self.current_img = None
-        self._pickup_once = False
-        self._attack_once = False
-        self._fps = {"idle": 4.0, "run": 10.0, "pickup": 8.0, "attack": 12.0}
+    def _move_axis(self, dt: float, collision_group, axis: Literal["x", "y"]) -> None:
+        total_velocity = self.vel + self._external_velocity
+        offset = total_velocity.x * dt if axis == "x" else total_velocity.y * dt
+        if not offset:
+            return
 
-    def update(self, dt, keys, world_rect=None):
-        self.attack_cd = max(0.0, self.attack_cd - dt)
-        self.dash_cd   = max(0.0, self.dash_cd - dt)
-        self.shadow_cd = max(0.0, self.shadow_cd - dt)
-
-        move = pygame.Vector2(0,0)
-        if keys[pygame.K_w]: move.y -= 1
-        if keys[pygame.K_s]: move.y += 1
-        if keys[pygame.K_a]: move.x -= 1
-        if keys[pygame.K_d]: move.x += 1
-        if move.length_squared():
-            move = move.normalize()
-            self.face = move
-
-        speed = self.BASE_SPEED + self.stats.agility * 6
-        next_pos = self.pos + move * speed * dt
-
-        r = self.radius + 2
-        if world_rect is not None:
-            left  = world_rect.left  + 20 + r
-            right = world_rect.right - 20 - r
-            top   = world_rect.top   + 20 + r
-            bot   = world_rect.bottom- 20 - r
-            next_pos.x = max(left,  min(right, next_pos.x))
-            next_pos.y = max(top,   min(bot,   next_pos.y))
+        if axis == "x":
+            self.pos.x += offset
         else:
-            from .constants import WIDTH, HEIGHT
-            next_pos.x = max(20+r, min(WIDTH-20-r, next_pos.x))
-            next_pos.y = max(20+r, min(HEIGHT-20-r, next_pos.y))
-        self.pos = next_pos
+            self.pos.y += offset
 
-        # decay melee preview ring
-        if self.last_hit_preview:
-            p, rad, t = self.last_hit_preview
-            t -= dt
-            self.last_hit_preview = (p, rad, t) if t>0 else None
+        rect = self.rect
+        for sprite in collision_group:
+            target = getattr(sprite, "rect", None)
+            if target and rect.colliderect(target):
+                if axis == "x":
+                    if offset > 0:
+                        self.pos.x = target.left - self.size.x / 2
+                    else:
+                        self.pos.x = target.right + self.size.x / 2
+                else:
+                    if offset > 0:
+                        self.pos.y = target.top + self.size.y
+                    else:
+                        self.pos.y = target.bottom
+                rect = self.rect
 
-        # minions
-        for m in self.minions:
-            m.update(dt, self.game_enemies)
+    def _spawn_attack_hitbox(self) -> None:
+        size = pygame.Vector2(28, 20)
+        rect = self._attack_rect_from_size(size)
+        damage = 14 + int(self.stats.strength * 0.5)
+        knockback = 180.0
+        self._hitboxes.append(
+            Hitbox(rect=rect, ttl_ms=ATTACK_HITBOX_MS, damage=damage, knockback=knockback, size=size)
+        )
 
-        self.hp = min(self.max_hp, self.hp + self.hp_regen_rate * dt)
-        self.mp = min(self.max_mp, self.mp + self.mp_regen_rate * dt)
-
-        moving = (keys[pygame.K_w] or keys[pygame.K_s] or keys[pygame.K_a] or keys[pygame.K_d])
-
-        if self.anim_state not in ("pickup", "attack"):
-            self.anim_state = "run" if moving else "idle"
-
-        prev_state = self.anim_state
-        if self.anim_state not in ("pickup", "attack"):
-            self.anim_state = "run" if moving else "idle"
-            if self.anim_state != prev_state:
-                self.anim_time = 0.0
-                self.anim_frame = 0
-
-        if self.anim_state == "run":
-            d = dir4_from_vec(self.face)               # E/W/N/S
-            frames = self.run4.get(d, [])
-        elif self.anim_state == "attack":
-            d = dir4_from_vec(self.face)
-            setdict = self.attack4_sword if (self.equipped=="sword" and self.has_sword) else self.attack4_fists
-            frames = setdict.get(d, [])
+    def _attack_rect_from_size(self, size: pygame.Vector2) -> pygame.Rect:
+        base_rect = self.rect
+        width, height = int(size.x), int(size.y)
+        rect = pygame.Rect(0, 0, width, height)
+        if self.facing == "right":
+            centerx = base_rect.centerx + base_rect.width // 2 + width // 2
         else:
-            idx = dir8_index_from_vec(self.face)
-            frames = self.pickup8[idx] if self.anim_state=="pickup" else (self.idle8[idx] if idx < len(self.idle8) else [])
+            centerx = base_rect.centerx - base_rect.width // 2 - width // 2
+        rect.center = (centerx, base_rect.centery)
+        return rect
 
-        fps = self._fps.get(self.anim_state, 6.0)
+    def _update_hitboxes(self, ms: float, enemies) -> None:
+        for hb in list(self._hitboxes):
+            if hb.follow_player:
+                hb.rect = self._attack_rect_from_size(hb.size)
+            hb.ttl_ms -= ms
+            if hb.ttl_ms <= 0:
+                self._hitboxes.remove(hb)
+                continue
+            if enemies:
+                for enemy in list(enemies):
+                    if not getattr(enemy, "alive", True):
+                        continue
+                    rect = getattr(enemy, "rect", None)
+                    if not rect or not hb.rect.colliderect(rect):
+                        continue
+                    enemy_id = id(enemy)
+                    if enemy_id in hb.hits:
+                        continue
+                    hb.hits.add(enemy_id)
+                    direction = pygame.Vector2(1 if self.facing == "right" else -1, 0)
+                    if hasattr(enemy, "take_damage"):
+                        enemy.take_damage(hb.damage, source=self, knockback=hb.knockback, direction=direction)
+
+    def _update_state(self) -> None:
+        if self.state in {"attack", "dash"}:
+            return
+        self.state = "walk" if self.move_intent.length_squared() else "idle"
+
+    def _update_animation(self, dt: float) -> None:
+        frames = self.animations.get(self.state) or self.animations["idle"]
+        fps = 8.0 if self.state != "attack" else 12.0
+        self.anim_timer += dt * fps
         if frames:
-            self.anim_time += fps * dt
-            if self._pickup_once and self.anim_time >= len(frames):
-                self.anim_state = "idle"; self._pickup_once = False; self.anim_time = 0.0
-            if self._attack_once and self.anim_time >= len(frames):
-                self.anim_state = "idle"; self._attack_once = False; self.anim_time = 0.0
-            self.anim_frame = int(self.anim_time) % max(1, len(frames))
-            self.current_img = frames[self.anim_frame]
+            idx = int(self.anim_timer) % len(frames)
+            self.frame_index = idx
+            frame = frames[idx]
+            frame_to_draw = frame
+            if self.facing == "right":
+                frame_to_draw = pygame.transform.flip(frame, True, False)
+            if self._hurt_timer > 0:
+                frame_to_draw = frame_to_draw.copy()
+                frame_to_draw.fill((255, 160, 160, 180), special_flags=pygame.BLEND_RGBA_MULT)
+            self.image = frame_to_draw
         else:
-            self.current_img = None
-            
-        # run selection
-        if self.anim_state == "run":
-            d = self._dir4_with_fix()          
-            frames = self.run4.get(d, [])
+            self.image = None
 
-        # attack selection
-        elif self.anim_state == "attack":
-            d = self._dir4_with_fix()          
-            setdict = self.attack4_sword if (self.equipped=="sword" and self.has_sword) else self.attack4_fists
-            frames = setdict.get(d, [])
+    def _recover_stamina(self, dt: float) -> None:
+        regen = 18.0 if self.state != "dash" else 0.0
+        self.stamina = clamp(self.stamina + regen * dt, 0.0, self.max_stamina)
 
-
-    # skills
-    def try_skill(self, enemies):
-        if self.who == CHAR_JINWOO:
-            if self.shadow_cd <= 0 and self.mp >= JIN_Q_COST:
-                self.mp -= JIN_Q_COST
-                self.pos += self.face * 140
-                from .constants import WIDTH, HEIGHT
-                self.pos.x = clamp(self.pos.x, 40, WIDTH-40)
-                self.pos.y = clamp(self.pos.y, 40, HEIGHT-40)
-                self._aoe_damage(self.pos + self.face*20, Q_BURST_RANGE, int(DAMAGE_SWORD*0.9), enemies)
-                self.shadow_cd = 1.2
+    def _update_external_velocity(self, dt: float) -> None:
+        if self._external_timer > 0.0:
+            self._external_timer = max(0.0, self._external_timer - dt)
+            decay = 0.85 ** (dt * 60.0)
+            self._external_velocity *= decay
+            if self._external_timer == 0.0:
+                self._external_velocity.xy = (0, 0)
         else:
-            if self.dash_cd <= 0 and self.mp >= CHA_Q_COST:
-                self.mp -= CHA_Q_COST
-                self.pos += self.face * 220
-                from .constants import WIDTH, HEIGHT
-                self.pos.x = clamp(self.pos.x, 40, WIDTH-40)
-                self.pos.y = clamp(self.pos.y, 40, HEIGHT-40)
-                self._aoe_damage(self.pos + self.face*18, Q_BURST_RANGE, int(DAMAGE_SWORD*1.0), enemies)
-                self.dash_cd = 1.5
+            self._external_velocity.xy = (0, 0)
 
-    def try_melee(self, enemies):
-        if self.attack_cd > 0: return
-        if self.equipped == "sword" and self.has_sword:
-            rng = SWORD_RANGE; dmg = DAMAGE_SWORD; cd = COOLDOWN_SWORD
+    # ------------------------------------------------------------------
+    @property
+    def rect(self) -> pygame.Rect:
+        return pygame.Rect(
+            int(self.pos.x - self.size.x / 2),
+            int(self.pos.y - self.size.y),
+            int(self.size.x),
+            int(self.size.y),
+        )
+
+    @property
+    def dash_cooldown(self) -> float:
+        return self._dash_cooldown
+
+    def draw(self, surface: pygame.Surface, offset: Optional[pygame.Vector2] = None) -> None:
+        offset = offset or pygame.Vector2(0, 0)
+        if self.image is None:
+            frames = self.animations.get(self.state, [])
+            frame = frames[int(self.frame_index) % len(frames)] if frames else pygame.Surface((32, 32))
+            img = pygame.transform.flip(frame, True, False) if self.facing == "right" else frame
         else:
-            rng = PUNCH_RANGE; dmg = DAMAGE_PUNCH; cd = COOLDOWN_PUNCH
+            img = self.image
+        rect = self.rect.move(-offset.x, -offset.y)
+        surface.blit(img, rect)
 
-        self.play_attack()
+    def _clamp_to_bounds(self, world) -> None:
+        bounds = getattr(world, "bounds", None)
+        if not bounds:
+            return
+        half_w = self.size.x / 2
+        self.pos.x = clamp(self.pos.x, bounds.left + half_w, bounds.right - half_w)
+        self.pos.y = clamp(self.pos.y, bounds.top + self.size.y, bounds.bottom)
 
-        hit_pos = self.pos + self.face * (self.radius + rng*0.6)
-        self._aoe_damage(hit_pos, rng, dmg, enemies)
-        self.last_hit_preview = (hit_pos, rng, 0.10)
-        self.attack_cd = cd
-
-    def _aoe_damage(self, center, radius, dmg, enemies):
-        for en in enemies:
-            if en.alive and (en.pos - center).length() <= (en.radius + radius):
-                en.take_damage(dmg)
-
-    def play_pickup(self):
-        has_frames = any(len(dir_frames) > 0 for dir_frames in self.pickup8)
-        if has_frames:
-            self.anim_state = "pickup"
-            self.anim_time = 0.0
-            self.anim_frame = 0
-            self._pickup_once = True
-
-    def play_attack(self):
-        self.anim_state = "attack"
-        self.anim_time = 0.0
-        self.anim_frame = 0
-        self._attack_once = True
-
-    # inventory helpers
-    def use_hp(self):
-        if self.hp_pots > 0 and self.hp < self.max_hp:
-            self.hp = min(self.max_hp, self.hp + 40); self.hp_pots -= 1
-
-    def use_mp(self):
-        if self.mp_pots > 0 and self.mp < self.max_mp:
-            self.mp = min(self.max_mp, self.mp + 20); self.mp_pots -= 1
-
-    # damage/death
-    def take_damage(self, dmg, source=None, knockback=0):
-        self.hp -= max(1, int(dmg))
-        if source is not None:
-            dv = self.pos - source
-            if dv.length_squared(): dv = dv.normalize()
-            self.pos += dv * (knockback * 0.05)
+    # ------------------------------------------------------------------
+    # Damage & status ---------------------------------------------------
+    def take_damage(
+        self,
+        amount: int,
+        source: Optional[pygame.Vector2 | pygame.math.Vector2 | object] = None,
+        knockback: float = 0.0,
+        direction: Optional[pygame.Vector2] = None,
+    ) -> None:
+        if self.intangible or self._invuln_timer > 0.0:
+            return
+        self.hp = max(0, self.hp - int(max(1, amount)))
+        self._invuln_timer = 0.35
+        self._hurt_timer = 0.2
+        if knockback > 0:
+            if direction is None and source is not None:
+                if isinstance(source, pygame.Vector2):
+                    direction = self.pos - source
+                elif hasattr(source, "pos"):
+                    direction = self.pos - pygame.Vector2(getattr(source, "pos"))
+            direction = direction or pygame.Vector2(1 if self.facing == "right" else -1, 0)
+            if direction.length_squared():
+                self._external_velocity = direction.normalize() * knockback
+                self._external_timer = 0.18
         if self.hp <= 0:
-            self._on_death()
+            self.state = "idle"
 
-    def _on_death(self):
-        penalty = min(50, self.gold)
-        self.gold -= penalty
+    def on_level_up(self) -> None:
+        self.stats.strength += 1
+        self.stats.endurance += 1
+        self.max_hp += 8
         self.hp = self.max_hp
-        self.mp = self.max_mp
-        self.minions.clear()
+        self.max_stamina = min(150.0, self.max_stamina + 5.0)
+        self.stamina = self.max_stamina
 
-    # render
-    def draw(self, surf):
-        if self.current_img:
-            rect = self.current_img.get_rect(center=(int(self.pos.x), int(self.pos.y)))
-            surf.blit(self.current_img, rect)
-        else:
-            col = (90,200,255) if self.who==CHAR_JINWOO else (255,210,120)
-            pygame.draw.circle(surf, col, self.pos, self.radius)
+    # Legacy shim helpers -----------------------------------------------
+    def update_legacy(self, dt: float, keys, world_rect=None):  # pragma: no cover
+        self.handle_input(keys, [])
+        dummy_world = type("LegacyWorld", (), {"collision_sprites": [], "enemies": [], "bounds": world_rect})
+        self.update(dt, dummy_world)
 
-        if self.last_hit_preview:
-            p, rad, _ = self.last_hit_preview
-            pygame.draw.circle(surf, (255,255,255), (int(p.x), int(p.y)), int(rad), 1)
+    def try_skill(self, _enemies):
+        self._dash_requested = True
 
-        for m in self.minions:
-            m.draw(surf)
-    def _dir4_with_fix(self):
-        d = dir4_from_vec(self.face)  # 'E','W','N','S'
-        if getattr(self, "flip_ew", True):   
-            if d == "E": d = "W"
-            elif d == "W": d = "E"
-        return d
+    def play_pickup(self) -> None:
+        pass
+
+    def try_melee(self, enemies) -> None:
+        self._attack_requested = True
+
+    def use_hp(self) -> None:
+        pass
+
+    def use_mp(self) -> None:
+        pass
+
+
+def _assert_facing_priority() -> None:
+    """Reproduction: press D, keep W held, ensure facing stays right until A is pressed."""
+    player = Player((0, 0))
+    events: list[pygame.event.Event] = []
+    keys = _FakeKeys({Keys.MOVE_RIGHT})
+    player.handle_input(keys, events)
+    assert player.facing == "right"
+    keys = _FakeKeys({Keys.MOVE_UP})
+    player.handle_input(keys, events)
+    assert player.facing == "right", "Vertical input should not change facing"
+    keys = _FakeKeys({Keys.MOVE_LEFT})
+    player.handle_input(keys, events)
+    assert player.facing == "left", "Horizontal input should flip facing"
+
+
+class _FakeKeys:
+    def __init__(self, pressed):
+        self._pressed = pressed
+
+    def __getitem__(self, key):
+        return key in self._pressed
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _assert_facing_priority()

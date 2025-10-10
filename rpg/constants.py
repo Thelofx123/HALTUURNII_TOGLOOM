@@ -1,5 +1,15 @@
+import pygame
+
+
 WIDTH, HEIGHT = 1280, 720
 FPS = 60
+
+PLAYER_SPEED = 160.0
+ATTACK_LOCK_MS = 220
+ATTACK_HITBOX_MS = 120
+DASH_COOLDOWN_MS = 600
+DASH_TIME_MS = 120
+DASH_DISTANCE = 120.0
 
 # Colors
 COL_BG = (32, 36, 44)
@@ -41,3 +51,17 @@ BASE_HP = 80
 # Characters
 CHAR_JINWOO = "JINWOO"
 CHAR_CHA    = "CHA"
+
+
+class Keys:
+    MOVE_UP = pygame.K_w
+    MOVE_DOWN = pygame.K_s
+    MOVE_LEFT = pygame.K_a
+    MOVE_RIGHT = pygame.K_d
+    ATTACK = pygame.K_j
+    DASH = pygame.K_k
+    INTERACT = pygame.K_e
+    INVENTORY = pygame.K_i
+    PAUSE = pygame.K_ESCAPE
+    QUICK_SAVE = pygame.K_F5
+    QUICK_LOAD = pygame.K_F9
