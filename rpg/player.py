@@ -56,8 +56,8 @@ class Player(pygame.sprite.Sprite):
         # Core stats
         self.stats = Stats()
         self.leveling = Leveling()
-        self.max_hp: int = 100
-        self.hp: int = self.max_hp
+        self.max_hp: float = 100.0
+        self.hp: float = self.max_hp
         self.max_stamina: float = 100.0
         self.stamina: float = self.max_stamina
         self.dash_cost: float = 20.0
@@ -159,7 +159,7 @@ class Player(pygame.sprite.Sprite):
         if self.state != prev_state:
             self.anim_timer = 0.0
         self._update_animation(dt)
-        self._recover_stamina(dt)
+        self._recover_resources(dt)
         self._update_external_velocity(dt)
 
     # ------------------------------------------------------------------
@@ -313,9 +313,14 @@ class Player(pygame.sprite.Sprite):
         else:
             self.image = None
 
-    def _recover_stamina(self, dt: float) -> None:
-        regen = 18.0 if self.state != "dash" else 0.0
-        self.stamina = clamp(self.stamina + regen * dt, 0.0, self.max_stamina)
+    def _recover_resources(self, dt: float) -> None:
+        """Passive HP/stamina regeneration."""
+
+        hp_regen = 0.8
+        stam_regen = 0.2 if self.state != "dash" else 0.0
+        if self.hp < self.max_hp:
+            self.hp = clamp(self.hp + hp_regen * dt, 0.0, self.max_hp)
+        self.stamina = clamp(self.stamina + stam_regen * dt, 0.0, self.max_stamina)
 
     def _update_external_velocity(self, dt: float) -> None:
         if self._external_timer > 0.0:
