@@ -85,6 +85,7 @@ class Player(pygame.sprite.Sprite):
         # Animation
         self._use_directional_animations = False
         self.animations: Dict[str, List[pygame.Surface] | Dict[str, List[pygame.Surface]]] = {}
+        self._attack_overlays: Dict[str, List[pygame.Surface]] = {}
         self._load_animations()
         self.anim_timer: float = 0.0
         self.frame_index: float = 0.0
@@ -143,6 +144,7 @@ class Player(pygame.sprite.Sprite):
         sample = frames[0]
         self.size = pygame.Vector2(sample.get_width(), sample.get_height())
         self._use_directional_animations = True
+        self._build_attack_overlays(sample.get_width(), sample.get_height())
 
     def _load_classic_animations(self) -> None:
         base_path = os.path.join("assets", "rpg", "player")
@@ -153,6 +155,66 @@ class Player(pygame.sprite.Sprite):
         }
         self.size = pygame.Vector2(20, 28)
         self._use_directional_animations = False
+        sample = (
+            self.animations["idle"][0]
+            if self.animations.get("idle")
+            else pygame.Surface((int(self.size.x), int(self.size.y)))
+        )
+        self._build_attack_overlays(sample.get_width(), sample.get_height())
+
+    def _build_attack_overlays(self, width: int, height: int) -> None:
+        overlays: Dict[str, List[pygame.Surface]] = {}
+        for orientation in ("right", "left", "up", "down"):
+            overlays[orientation] = self._make_sword_sweep(width, height, orientation)
+        self._attack_overlays = overlays
+
+    def _make_sword_sweep(self, width: int, height: int, orientation: str) -> List[pygame.Surface]:
+        frames: List[pygame.Surface] = []
+        base_dir = pygame.Vector2(1, 0)
+        if orientation == "left":
+            base_dir.xy = (-1, 0)
+        elif orientation == "up":
+            base_dir.xy = (0, -1)
+        elif orientation == "down":
+            base_dir.xy = (0, 1)
+        perp = pygame.Vector2(-base_dir.y, base_dir.x)
+        anchor = pygame.Vector2(width * 0.5, height * 0.65)
+        if orientation == "left":
+            anchor.x = width * 0.45
+        elif orientation == "right":
+            anchor.x = width * 0.55
+        if orientation == "up":
+            anchor.y = height * 0.45
+        elif orientation == "down":
+            anchor.y = height * 0.72
+        progressions = (0.35, 0.6, 0.85, 1.0)
+
+        for prog in progressions:
+            surf = pygame.Surface((width, height), pygame.SRCALPHA)
+            length = (width if abs(base_dir.x) > 0 else height) * (0.55 + 0.35 * prog)
+            start = anchor - base_dir * (length * 0.2)
+            tip = anchor + base_dir * (length * 0.8)
+            sway = (prog - 0.5) * 0.35
+            tip += perp * sway * (height * 0.5)
+            blade_half = 3.0 + prog * 5.0
+            edge_a = start - perp * blade_half * 0.4
+            edge_b = tip - perp * blade_half
+            edge_c = tip + perp * blade_half
+            edge_d = start + perp * blade_half * 0.4
+            polygon = [edge_a, edge_b, edge_c, edge_d]
+            pygame.draw.polygon(surf, (254, 248, 228, 235), [(int(p.x), int(p.y)) for p in polygon])
+            inner = [
+                start * 0.35 + tip * 0.65 - perp * blade_half * 0.25,
+                tip - perp * blade_half * 0.25,
+                tip + perp * blade_half * 0.25,
+                start * 0.35 + tip * 0.65 + perp * blade_half * 0.25,
+            ]
+            pygame.draw.polygon(surf, (255, 214, 160, 200), [(int(p.x), int(p.y)) for p in inner])
+            spark_center = tip + perp * blade_half * 0.15
+            pygame.draw.circle(surf, (255, 236, 180, 210), (int(spark_center.x), int(spark_center.y)), max(2, int(2 + prog * 2)))
+            frames.append(surf)
+
+        return frames
 
     # ------------------------------------------------------------------
     # Input
@@ -391,6 +453,7 @@ class Player(pygame.sprite.Sprite):
         frames = self.animations.get(self.state) or self.animations["idle"]
         fps = 8.0 if self.state != "attack" else 12.0
         self.anim_timer += dt * fps
+        overlay_orientation: Optional[str] = None
         if isinstance(frames, dict):
             orientation = self.orientation
             orient_frames = frames.get(orientation) or frames.get("down") or next(iter(frames.values()))
@@ -403,7 +466,8 @@ class Player(pygame.sprite.Sprite):
             if self._hurt_timer > 0:
                 frame = frame.copy()
                 frame.fill((255, 160, 160, 180), special_flags=pygame.BLEND_RGBA_MULT)
-            self.image = frame
+            frame_to_draw = frame
+            overlay_orientation = orientation
         elif frames:
             idx = int(self.anim_timer) % len(frames)
             self.frame_index = idx
@@ -414,9 +478,23 @@ class Player(pygame.sprite.Sprite):
             if self._hurt_timer > 0:
                 frame_to_draw = frame_to_draw.copy()
                 frame_to_draw.fill((255, 160, 160, 180), special_flags=pygame.BLEND_RGBA_MULT)
-            self.image = frame_to_draw
+            overlay_orientation = "right" if self.facing == "right" else "left"
         else:
             self.image = None
+            return
+
+        if self.state == "attack" and overlay_orientation:
+            overlays = self._attack_overlays.get(overlay_orientation)
+            if not overlays and overlay_orientation in {"left", "right"}:
+                fallback = "left" if overlay_orientation == "left" else "right"
+                overlays = self._attack_overlays.get(fallback)
+            if overlays:
+                idx = int(self.anim_timer) % len(overlays)
+                overlay = overlays[idx]
+                frame_to_draw = frame_to_draw.copy()
+                frame_to_draw.blit(overlay, (0, 0))
+
+        self.image = frame_to_draw
 
     def _recover_resources(self, dt: float) -> None:
         """Passive HP/stamina regeneration."""

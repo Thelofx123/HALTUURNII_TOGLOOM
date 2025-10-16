@@ -13,16 +13,35 @@ from .utils import load_desert_tile, load_pixel_font
 DASH_COOLDOWN = DASH_COOLDOWN_MS / 1000.0
 
 
+def draw_text_with_shadow(
+    surface: pygame.Surface,
+    font: pygame.font.Font,
+    text: str,
+    color: tuple[int, int, int],
+    pos: tuple[int, int],
+    *,
+    shadow_offset: tuple[int, int] = (1, 1),
+    shadow_color: tuple[int, int, int] = (0, 0, 0),
+) -> pygame.Surface:
+    shadow = font.render(text, True, shadow_color)
+    if shadow_offset != (0, 0):
+        surface.blit(shadow, (pos[0] + shadow_offset[0], pos[1] + shadow_offset[1]))
+    text_surface = font.render(text, True, color)
+    surface.blit(text_surface, pos)
+    return text_surface
+
+
 @dataclass
 class HudPalette:
-    hp_color: tuple[int, int, int] = (222, 82, 76)
-    stamina_color: tuple[int, int, int] = (120, 192, 138)
-    bar_bg: tuple[int, int, int] = (54, 40, 32)
-    outline: tuple[int, int, int] = (247, 226, 186)
-    dash_ready: tuple[int, int, int] = (224, 210, 120)
-    dash_wait: tuple[int, int, int] = (160, 132, 104)
-    panel_bg: tuple[int, int, int] = (78, 54, 34)
-    panel_shadow: tuple[int, int, int] = (40, 28, 18)
+    hp_color: tuple[int, int, int] = (232, 96, 88)
+    stamina_color: tuple[int, int, int] = (124, 196, 166)
+    bar_bg: tuple[int, int, int] = (32, 24, 20)
+    outline: tuple[int, int, int] = (252, 236, 208)
+    dash_ready: tuple[int, int, int] = (236, 222, 148)
+    dash_wait: tuple[int, int, int] = (176, 148, 120)
+    panel_bg: tuple[int, int, int] = (28, 22, 18)
+    panel_shadow: tuple[int, int, int] = (12, 8, 6)
+    panel_highlight: tuple[int, int, int] = (92, 72, 48)
     state_idle: tuple[int, int, int] = (240, 214, 174)
     state_attack: tuple[int, int, int] = (255, 174, 120)
     state_dash: tuple[int, int, int] = (214, 198, 255)
@@ -73,17 +92,27 @@ class HudRenderer:
             self.palette.stamina_color,
         )
 
-        hp_text = self.font.render(f"HP {int(player.hp)}/{int(player.max_hp)}", True, self.palette.outline)
-        surface.blit(hp_text, (bar_left, rect_hp.y - 20))
-        stamina_text = self.small.render(f"STM {player.stamina:05.1f}", True, self.palette.outline)
-        surface.blit(stamina_text, (bar_left, rect_stamina.y - 18))
+        draw_text_with_shadow(
+            surface,
+            self.font,
+            f"HP {int(player.hp)}/{int(player.max_hp)}",
+            self.palette.outline,
+            (bar_left, rect_hp.y - 20),
+        )
+        draw_text_with_shadow(
+            surface,
+            self.small,
+            f"STM {player.stamina:05.1f}",
+            self.palette.outline,
+            (bar_left, rect_stamina.y - 18),
+        )
 
         dash_rect = pygame.Rect(bar_left, rect_stamina.bottom + 24, panel.width - 32, 14)
         pct = 1.0 - min(1.0, dash_cooldown / DASH_COOLDOWN) if DASH_COOLDOWN > 0 else 1.0
         dash_color = self.palette.dash_ready if pct >= 0.999 else self.palette.dash_wait
         self._draw_bar(surface, dash_rect, pct, dash_color)
         dash_label = "Dash Ready" if pct >= 0.999 else f"Dash {dash_cooldown:.1f}s"
-        surface.blit(self.small.render(dash_label, True, self.palette.outline), (bar_left, dash_rect.y - 16))
+        draw_text_with_shadow(surface, self.small, dash_label, self.palette.outline, (bar_left, dash_rect.y - 16))
 
         self._draw_facing(surface, panel, player)
         self._draw_state(surface, panel, player)
@@ -91,21 +120,28 @@ class HudRenderer:
         level = player.leveling.level
         xp = player.leveling.xp
         xp_to_next = player.leveling.xp_to_next
-        xp_text = self.small.render(f"Lv {level}  XP {xp}/{xp_to_next}", True, self.palette.outline)
+        xp_text = f"Lv {level}  XP {xp}/{xp_to_next}"
         xp_y = dash_rect.bottom + 16
-        surface.blit(xp_text, (bar_left, xp_y))
+        draw_text_with_shadow(surface, self.small, xp_text, self.palette.outline, (bar_left, xp_y))
 
-        line_y = xp_y + xp_text.get_height() + 4
-        gold_text = self.small.render(f"Gold: {player.gold}", True, self.palette.outline)
-        surface.blit(gold_text, (bar_left, line_y))
-        line_y += gold_text.get_height() + 4
-        weapon_label = self.small.render(f"Weapon: {player.weapon_item.name}", True, self.palette.outline)
-        surface.blit(weapon_label, (bar_left, line_y))
+        line_y = xp_y + self.small.get_height() + 4
+        gold_text = f"Gold: {player.gold}"
+        draw_text_with_shadow(surface, self.small, gold_text, self.palette.outline, (bar_left, line_y))
+        line_y += self.small.get_height() + 4
+        weapon_label = f"Weapon: {player.weapon_item.name}"
+        draw_text_with_shadow(surface, self.small, weapon_label, self.palette.outline, (bar_left, line_y))
 
         if self._level_up_timer > 0.0:
-            text = self.big.render(self._level_up_text, True, self.palette.outline)
-            x = surface.get_width() // 2 - text.get_width() // 2
-            surface.blit(text, (x, panel.y - 40))
+            width, _ = self.big.size(self._level_up_text)
+            pos = (surface.get_width() // 2 - width // 2, panel.y - 40)
+            draw_text_with_shadow(
+                surface,
+                self.big,
+                self._level_up_text,
+                self.palette.outline,
+                pos,
+                shadow_offset=(0, 2),
+            )
 
     def _draw_bar(self, surface: pygame.Surface, rect: pygame.Rect, pct: float, color: tuple[int, int, int]) -> None:
         pct = max(0.0, min(1.0, pct))
@@ -117,18 +153,21 @@ class HudRenderer:
         pygame.draw.rect(surface, self.palette.outline, rect, 1, border_radius=6)
 
     def _draw_panel(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
-        shadow = rect.move(4, 6)
-        pygame.draw.rect(surface, self.palette.panel_shadow, shadow, border_radius=12)
-        pygame.draw.rect(surface, self.palette.panel_bg, rect, border_radius=12)
+        shadow = rect.move(6, 8)
+        pygame.draw.rect(surface, self.palette.panel_shadow, shadow, border_radius=14)
+
+        panel_surface = pygame.Surface(rect.size, pygame.SRCALPHA)
+        panel_surface.fill((*self.palette.panel_bg, 235))
         if self._panel_texture:
-            inner = rect.inflate(-20, -20)
-            clip = surface.get_clip()
-            surface.set_clip(inner)
-            tex = self._panel_texture
-            for x in range(inner.left, inner.right, tex.get_width()):
-                for y in range(inner.top, inner.bottom, tex.get_height()):
-                    surface.blit(tex, (x, y))
-            surface.set_clip(clip)
+            tex = self._panel_texture.copy()
+            tex.set_alpha(70)
+            for x in range(0, rect.width, tex.get_width()):
+                for y in range(0, rect.height, tex.get_height()):
+                    panel_surface.blit(tex, (x, y))
+        glow = pygame.Surface(rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(glow, (*self.palette.panel_highlight, 48), glow.get_rect(), border_radius=12)
+        panel_surface.blit(glow, (0, 0))
+        surface.blit(panel_surface, rect)
         pygame.draw.rect(surface, self.palette.outline, rect, 2, border_radius=12)
 
     def _draw_facing(self, surface: pygame.Surface, panel: pygame.Rect, player) -> None:
@@ -163,8 +202,7 @@ class HudRenderer:
                 (arrow_center[0] + size // 2, arrow_center[1] - size // 2),
             ]
         pygame.draw.polygon(surface, self.palette.outline, points)
-        label = self.small.render("Direction", True, self.palette.outline)
-        surface.blit(label, (area.x, area.bottom + 4))
+        draw_text_with_shadow(surface, self.small, "Direction", self.palette.outline, (area.x, area.bottom + 4))
 
     def _draw_state(self, surface: pygame.Surface, panel: pygame.Rect, player) -> None:
         base = pygame.Rect(panel.x + 16, panel.bottom - 36, panel.width - 32, 20)
@@ -232,24 +270,18 @@ class InventoryOverlay:
         width = 440
         height = 420
         panel = pygame.Rect(36, surface.get_height() - height - 36, width, height)
-        shadow = panel.move(6, 8)
-        pygame.draw.rect(surface, (0, 0, 0, 160), shadow, border_radius=12)
-        pygame.draw.rect(surface, (60, 44, 32), panel, border_radius=12)
-        if self._panel_texture:
-            inner = panel.inflate(-24, -24)
-            clip = surface.get_clip()
-            surface.set_clip(inner)
-            tex = self._panel_texture
-            for x in range(inner.left, inner.right, tex.get_width()):
-                for y in range(inner.top, inner.bottom, tex.get_height()):
-                    surface.blit(tex, (x, y))
-            surface.set_clip(clip)
-        pygame.draw.rect(surface, (240, 222, 190), panel, 2, border_radius=12)
+        self._draw_panel(surface, panel)
 
-        title = self.header.render("Inventory", True, (235, 235, 245))
-        surface.blit(title, (panel.x + 16, panel.y + 16))
-        gold_text = self.font.render(f"Gold {gold}", True, (220, 210, 245))
-        surface.blit(gold_text, (panel.x + panel.width - gold_text.get_width() - 20, panel.y + 20))
+        draw_text_with_shadow(surface, self.header, "Inventory", (238, 230, 255), (panel.x + 16, panel.y + 16))
+        gold_label = f"Gold {gold}"
+        gold_size = self.font.size(gold_label)
+        draw_text_with_shadow(
+            surface,
+            self.font,
+            gold_label,
+            (236, 224, 250),
+            (panel.x + panel.width - gold_size[0] - 20, panel.y + 20),
+        )
 
         owned_ids = {item.id for item in inventory.owned()}
         equipped = inventory.equipped()
@@ -260,8 +292,7 @@ class InventoryOverlay:
         for index, item in enumerate(items):
             number_label = "0" if index == 9 else str(index + 1)
             label = f"[{number_label}] {item.name}"
-            label_surface = self.font.render(label, True, (235, 235, 245))
-            surface.blit(label_surface, (panel.x + 18, line_y))
+            draw_text_with_shadow(surface, self.font, label, (242, 240, 252), (panel.x + 18, line_y))
 
             status_parts: list[str] = []
             if item.id in owned_ids:
@@ -271,7 +302,7 @@ class InventoryOverlay:
             if not status_parts:
                 status_parts.append(f"{item.price}G")
             status = " / ".join(status_parts)
-            status_surface = self.small.render(status, True, (190, 190, 220))
+            status_surface = self.small.render(status, True, (198, 198, 230))
             surface.blit(status_surface, (panel.x + width - status_surface.get_width() - 20, line_y + 4))
 
             info = f"+{item.attack_bonus} ATK" if item.attack_bonus else ""
@@ -281,21 +312,43 @@ class InventoryOverlay:
                 info += (", " if info else "") + f"{item.stamina_bonus:+.0f} STM"
             if not info:
                 info = item.description
-            info_surface = self.small.render(info, True, (150, 150, 190))
+            info_surface = self.small.render(info, True, (170, 170, 210))
             surface.blit(info_surface, (panel.x + 28, line_y + 18))
 
             line_y += line_height + 12
             if line_y > panel.bottom - 72:
                 break
 
-        hint = self.small.render("Press number to buy/equip, I to close", True, (210, 210, 230))
-        surface.blit(hint, (panel.x + 18, panel.bottom - 48))
+        draw_text_with_shadow(
+            surface,
+            self.small,
+            "Press number to buy/equip, I to close",
+            (216, 216, 236),
+            (panel.x + 18, panel.bottom - 48),
+        )
         if self._message:
-            msg = self.small.render(self._message, True, (255, 220, 160))
-            surface.blit(msg, (panel.x + 18, panel.bottom - 28))
+            draw_text_with_shadow(surface, self.small, self._message, (255, 226, 176), (panel.x + 18, panel.bottom - 28))
 
     def _load_panel_texture(self) -> Optional[pygame.Surface]:
         try:
             return load_desert_tile("Interface", 0, scale=2.0)
         except FileNotFoundError:
             return None
+
+    def _draw_panel(self, surface: pygame.Surface, rect: pygame.Rect) -> None:
+        shadow = rect.move(8, 10)
+        pygame.draw.rect(surface, (8, 6, 4), shadow, border_radius=16)
+
+        panel_surface = pygame.Surface(rect.size, pygame.SRCALPHA)
+        panel_surface.fill((26, 20, 16, 235))
+        if self._panel_texture:
+            tex = self._panel_texture.copy()
+            tex.set_alpha(60)
+            for x in range(0, rect.width, tex.get_width()):
+                for y in range(0, rect.height, tex.get_height()):
+                    panel_surface.blit(tex, (x, y))
+        vignette = pygame.Surface(rect.size, pygame.SRCALPHA)
+        pygame.draw.rect(vignette, (120, 96, 72, 55), vignette.get_rect(), border_radius=14)
+        panel_surface.blit(vignette, (0, 0))
+        surface.blit(panel_surface, rect)
+        pygame.draw.rect(surface, (246, 230, 206), rect, 2, border_radius=14)
