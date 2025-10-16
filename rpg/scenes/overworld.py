@@ -29,14 +29,15 @@ class SceneOverworld(SceneBase):
 
         self.collision_sprites = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
-        self._build_bounds()
+        # self._build_bounds()
+        inner_bounds = self._build_bounds()
         self._spawn_enemies()
 
         world_rect = pygame.Rect(0, 0, int(self.WORLD_SIZE.x), int(self.WORLD_SIZE.y))
         self.world = SimpleNamespace(
             collision_sprites=self.collision_sprites,
             enemies=self.enemies,
-            bounds=world_rect,
+            bounds=inner_bounds,
         )
 
         self.gates: List[Gate] = []
@@ -66,7 +67,7 @@ class SceneOverworld(SceneBase):
             self.game.state.pending_status = ""
 
     # ------------------------------------------------------------------
-    def _build_bounds(self) -> None:
+    def _build_bounds(self) -> pygame.Rect:
         margin = 32
         world_w, world_h = int(self.WORLD_SIZE.x), int(self.WORLD_SIZE.y)
         rects = [
@@ -79,6 +80,9 @@ class SceneOverworld(SceneBase):
             sprite = pygame.sprite.Sprite()
             sprite.rect = rect
             self.collision_sprites.add(sprite)
+        
+        inner_react = pygame.Rect(margin, margin, world_w - margin * 2, world_h - margin * 2)
+        return inner_react
 
     def _spawn_enemies(self) -> None:
         rng = random.Random(42)

@@ -4,24 +4,24 @@ import pygame
 WIDTH, HEIGHT = 1280, 720
 FPS = 60
 
-PLAYER_SPEED = 160.0
+PLAYER_SPEED = 150.0
 ATTACK_LOCK_MS = 220
 ATTACK_HITBOX_MS = 120
 DASH_COOLDOWN_MS = 600
 DASH_TIME_MS = 120
-DASH_DISTANCE = 120.0
+DASH_DISTANCE = 160.0
 
 # Colors
-COL_BG = (214, 184, 140)
+COL_BG = (214, 226, 186)
 COL_UI = (247, 226, 186)
 
 # Border walls (simple)
 BORDER_WALLS = [
     # top, bottom, left, right
-    __import__("pygame").Rect(0, 0, WIDTH, 20),
-    __import__("pygame").Rect(0, HEIGHT - 20, WIDTH, 20),
-    __import__("pygame").Rect(0, 0, 20, HEIGHT),
-    __import__("pygame").Rect(WIDTH - 20, 0, 20, HEIGHT),
+    __import__("pygame").Rect(0, 0, WIDTH, 50),
+    __import__("pygame").Rect(0, HEIGHT - 50, WIDTH, 50),
+    __import__("pygame").Rect(0, 0, 50, HEIGHT),
+    __import__("pygame").Rect(WIDTH - 50, 0, 50, HEIGHT),
 ]
 
 # Combat tuning
