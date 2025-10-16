@@ -118,18 +118,20 @@ class HudRenderer:
         self._draw_state(surface, panel, player)
 
         level = player.leveling.level
-        xp = player.leveling.xp
-        xp_to_next = player.leveling.xp_to_next
-        xp_text = f"Lv {level}  XP {xp}/{xp_to_next}"
         xp_y = dash_rect.bottom + 16
-        draw_text_with_shadow(surface, self.small, xp_text, self.palette.outline, (bar_left, xp_y))
+        level_radius = self.small.get_height() // 2 + 4
+        level_center = (bar_left + level_radius, xp_y + self.small.get_height() // 2)
+        pygame.draw.circle(surface, self.palette.bar_bg, level_center, level_radius)
+        pygame.draw.circle(surface, self.palette.outline, level_center, level_radius, 2)
+        level_surface = self.small.render(str(level), True, self.palette.outline)
+        level_rect = level_surface.get_rect(center=level_center)
+        surface.blit(level_surface, level_rect)
 
-        line_y = xp_y + self.small.get_height() + 4
-        gold_text = f"Gold: {player.gold}"
-        draw_text_with_shadow(surface, self.small, gold_text, self.palette.outline, (bar_left, line_y))
-        line_y += self.small.get_height() + 4
+
         weapon_label = f"Weapon: {player.weapon_item.name}"
-        draw_text_with_shadow(surface, self.small, weapon_label, self.palette.outline, (bar_left, line_y))
+        weapon_width, _ = self.small.size(weapon_label)
+        weapon_pos = (panel.right - 60 - weapon_width, panel.y + 24)
+        draw_text_with_shadow(surface, self.small, weapon_label, self.palette.outline, weapon_pos)
 
         if self._level_up_timer > 0.0:
             width, _ = self.big.size(self._level_up_text)
