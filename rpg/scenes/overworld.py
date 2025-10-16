@@ -29,18 +29,17 @@ class SceneOverworld(SceneBase):
 
         self.collision_sprites = pygame.sprite.Group()
         self.enemies = pygame.sprite.Group()
-        self._build_bounds()
-        self._spawn_enemies()
-
-        world_rect = pygame.Rect(0, 0, int(self.WORLD_SIZE.x), int(self.WORLD_SIZE.y))
-        self.world = SimpleNamespace(
-            collision_sprites=self.collision_sprites,
-            enemies=self.enemies,
-            bounds=world_rect,
-        )
+        inner_bounds = self._build_bounds()
 
         self.gates: List[Gate] = []
         self._build_gates()
+        self._spawn_enemies()
+
+        self.world = SimpleNamespace(
+            collision_sprites=self.collision_sprites,
+            enemies=self.enemies,
+            bounds=inner_bounds,
+        )
 
         self.camera = pygame.Vector2(0, 0)
         self.hud = HudRenderer()
@@ -66,7 +65,7 @@ class SceneOverworld(SceneBase):
             self.game.state.pending_status = ""
 
     # ------------------------------------------------------------------
-    def _build_bounds(self) -> None:
+    def _build_bounds(self) -> pygame.Rect:
         margin = 32
         world_w, world_h = int(self.WORLD_SIZE.x), int(self.WORLD_SIZE.y)
         rects = [
@@ -80,9 +79,21 @@ class SceneOverworld(SceneBase):
             sprite.rect = rect
             self.collision_sprites.add(sprite)
 
+        inner_rect = pygame.Rect(
+            margin,
+            margin,
+            max(0, world_w - 2 * margin),
+            max(0, world_h - 2 * margin),
+        )
+        return inner_rect
+
     def _spawn_enemies(self) -> None:
         rng = random.Random(42)
-        for _ in range(12):
+        base_count = 12
+        player_level = self.player.leveling.level
+        danger_bonus = sum(max(0, gate.req_level - player_level) for gate in self.gates)
+        spawn_total = base_count + danger_bonus * 2
+        for _ in range(spawn_total):
             pos = (
                 rng.uniform(self.WORLD_SIZE.x * 0.15, self.WORLD_SIZE.x * 0.85),
                 rng.uniform(self.WORLD_SIZE.y * 0.15, self.WORLD_SIZE.y * 0.85),

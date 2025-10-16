@@ -51,7 +51,7 @@ class Player(pygame.sprite.Sprite):
         self.pos = pygame.Vector2(pos)
         self.vel = pygame.Vector2()
         self.move_intent = pygame.Vector2()
-        self.facing: Facing = "left"
+        self.facing: Facing = "right"
         self.orientation: Literal["left", "right", "up", "down"] = "down"
         self.state: PlayerState = "idle"
         self.alive: bool = True
@@ -119,29 +119,54 @@ class Player(pygame.sprite.Sprite):
         self._load_classic_animations()
 
     def _load_desert_animations(self) -> None:
+        from .constants import CHAR_CHA, CHAR_JINWOO
+
         frames = load_desert_sheet("Players", scale=2.0)
-        if len(frames) < 16:
+        if len(frames) < 15:
             raise FileNotFoundError("Player sheet does not contain enough frames")
 
-        directions = ["down", "left", "right", "up"]
-        walk: Dict[str, List[pygame.Surface]] = {}
-        for idx, direction in enumerate(directions):
-            start = idx * 4
-            walk[direction] = frames[start : start + 4]
+        selection: Dict[str, range] = {
+            CHAR_JINWOO: range(0, 8),
+            CHAR_CHA: range(8, 15),
+        }
 
-        idle: Dict[str, List[pygame.Surface]] = {direction: [frames[idx * 4]] for idx, direction in enumerate(directions)}
+        indices = selection.get(self.who, range(0, 8))
+        chosen: List[pygame.Surface] = [frames[i] for i in indices if i < len(frames)]
+        if not chosen:
+            raise FileNotFoundError("No frames available for player sprite")
+
+        def ensure_sequence(seq: List[pygame.Surface]) -> List[pygame.Surface]:
+            return seq if seq else [chosen[0]]
+
+        down_walk = ensure_sequence(chosen[0:2])
+        right_walk = ensure_sequence(chosen[2:4])
+        up_walk = ensure_sequence(chosen[4:6])
+        left_walk = [pygame.transform.flip(frame, True, False) for frame in right_walk]
+
+        walk: Dict[str, List[pygame.Surface]] = {
+            "down": down_walk,
+            "right": right_walk,
+            "up": up_walk,
+            "left": left_walk,
+        }
+
+        idle: Dict[str, List[pygame.Surface]] = {
+            direction: [frames_seq[0]] if frames_seq else [chosen[0]]
+            for direction, frames_seq in walk.items()
+        }
 
         attack: Dict[str, List[pygame.Surface]] = {}
         for direction, seq in walk.items():
+            base_seq = seq if seq else [chosen[0]]
             tinted: List[pygame.Surface] = []
-            for frame in seq:
+            for frame in base_seq:
                 surf = frame.copy()
                 surf.fill((255, 210, 170, 80), special_flags=pygame.BLEND_RGBA_ADD)
                 tinted.append(surf)
             attack[direction] = tinted
 
         self.animations = {"idle": idle, "walk": walk, "attack": attack}
-        sample = frames[0]
+        sample = chosen[0]
         self.size = pygame.Vector2(sample.get_width(), sample.get_height())
         self._use_directional_animations = True
         self._build_attack_overlays(sample.get_width(), sample.get_height())
@@ -480,12 +505,12 @@ class Player(pygame.sprite.Sprite):
             self.frame_index = idx
             frame = frames[idx]
             frame_to_draw = frame
-            if self.facing == "right":
+            if self.facing == "left":
                 frame_to_draw = pygame.transform.flip(frame, True, False)
             if self._hurt_timer > 0:
                 frame_to_draw = frame_to_draw.copy()
                 frame_to_draw.fill((255, 160, 160, 180), special_flags=pygame.BLEND_RGBA_MULT)
-            overlay_orientation = "right" if self.facing == "right" else "left"
+            overlay_orientation = self.facing
         else:
             self.image = None
             return
@@ -546,7 +571,7 @@ class Player(pygame.sprite.Sprite):
                 img = frame
             else:
                 frame = frames[int(self.frame_index) % len(frames)] if frames else pygame.Surface((32, 32))
-                img = pygame.transform.flip(frame, True, False) if self.facing == "right" else frame
+                img = pygame.transform.flip(frame, True, False) if self.facing == "left" else frame
         else:
             img = self.image
         rect = self.rect.move(-offset.x + 40, -offset.y + 40)
