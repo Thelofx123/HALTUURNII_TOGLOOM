@@ -12,8 +12,8 @@ DASH_TIME_MS = 120
 DASH_DISTANCE = 120.0
 
 # Colors
-COL_BG = (32, 36, 44)
-COL_UI = (235, 235, 245)
+COL_BG = (214, 184, 140)
+COL_UI = (247, 226, 186)
 
 # Border walls (simple)
 BORDER_WALLS = [

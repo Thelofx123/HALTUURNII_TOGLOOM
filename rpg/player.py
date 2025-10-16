@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Iterable, Literal, Optional
+from typing import Dict, Iterable, List, Literal, Optional
 
 import os
 import pygame
@@ -19,7 +19,7 @@ from .constants import (
 from .inventory import ITEM_LIBRARY, Inventory, Item
 from .leveling import Leveling
 from .stats import Stats
-from .utils import clamp, load_anim_folder, vnorm
+from .utils import clamp, load_anim_folder, load_desert_sheet, vnorm
 
 Facing = Literal["left", "right"]
 PlayerState = Literal["idle", "walk", "attack", "dash"]
@@ -52,6 +52,7 @@ class Player(pygame.sprite.Sprite):
         self.vel = pygame.Vector2()
         self.move_intent = pygame.Vector2()
         self.facing: Facing = "left"
+        self.orientation: Literal["left", "right", "up", "down"] = "down"
         self.state: PlayerState = "idle"
         self.alive: bool = True
 
@@ -82,12 +83,9 @@ class Player(pygame.sprite.Sprite):
         self.max_mp = 50
 
         # Animation
-        base_path = os.path.join("assets", "rpg", "player")
-        self.animations = {
-            "idle": load_anim_folder(os.path.join(base_path, "idle")),
-            "walk": load_anim_folder(os.path.join(base_path, "walk")),
-            "attack": load_anim_folder(os.path.join(base_path, "attack")),
-        }
+        self._use_directional_animations = False
+        self.animations: Dict[str, List[pygame.Surface] | Dict[str, List[pygame.Surface]]] = {}
+        self._load_animations()
         self.anim_timer: float = 0.0
         self.frame_index: float = 0.0
         self.image: Optional[pygame.Surface] = None
@@ -109,6 +107,52 @@ class Player(pygame.sprite.Sprite):
         self._hurt_timer: float = 0.0
 
         self.recalculate_stats()
+
+    # ------------------------------------------------------------------
+    def _load_animations(self) -> None:
+        try:
+            self._load_desert_animations()
+            return
+        except FileNotFoundError:
+            pass
+        self._load_classic_animations()
+
+    def _load_desert_animations(self) -> None:
+        frames = load_desert_sheet("Players", scale=2.0)
+        if len(frames) < 16:
+            raise FileNotFoundError("Player sheet does not contain enough frames")
+
+        directions = ["down", "left", "right", "up"]
+        walk: Dict[str, List[pygame.Surface]] = {}
+        for idx, direction in enumerate(directions):
+            start = idx * 4
+            walk[direction] = frames[start : start + 4]
+
+        idle: Dict[str, List[pygame.Surface]] = {direction: [frames[idx * 4]] for idx, direction in enumerate(directions)}
+
+        attack: Dict[str, List[pygame.Surface]] = {}
+        for direction, seq in walk.items():
+            tinted: List[pygame.Surface] = []
+            for frame in seq:
+                surf = frame.copy()
+                surf.fill((255, 210, 170, 80), special_flags=pygame.BLEND_RGBA_ADD)
+                tinted.append(surf)
+            attack[direction] = tinted
+
+        self.animations = {"idle": idle, "walk": walk, "attack": attack}
+        sample = frames[0]
+        self.size = pygame.Vector2(sample.get_width(), sample.get_height())
+        self._use_directional_animations = True
+
+    def _load_classic_animations(self) -> None:
+        base_path = os.path.join("assets", "rpg", "player")
+        self.animations = {
+            "idle": load_anim_folder(os.path.join(base_path, "idle")),
+            "walk": load_anim_folder(os.path.join(base_path, "walk")),
+            "attack": load_anim_folder(os.path.join(base_path, "attack")),
+        }
+        self.size = pygame.Vector2(20, 28)
+        self._use_directional_animations = False
 
     # ------------------------------------------------------------------
     # Input
@@ -136,6 +180,23 @@ class Player(pygame.sprite.Sprite):
         elif horizontal > 0:
             self.facing = "right"
 
+        if self.move_intent.length_squared():
+            if abs(self.move_intent.x) >= abs(self.move_intent.y):
+                self.orientation = "left" if self.move_intent.x < 0 else "right"
+            else:
+                self.orientation = "up" if self.move_intent.y < 0 else "down"
+        if self._use_directional_animations:
+            if self.orientation == "left":
+                self.face.xy = (-1, 0)
+            elif self.orientation == "right":
+                self.face.xy = (1, 0)
+            elif self.orientation == "up":
+                self.face.xy = (0, -1)
+            else:
+                self.face.xy = (0, 1)
+        else:
+            self.face.xy = (1 if self.facing == "right" else -1, 0)
+
         for event in events:
             if event.type == pygame.KEYDOWN:
                 if event.key == Keys.ATTACK:
@@ -143,8 +204,9 @@ class Player(pygame.sprite.Sprite):
                 if event.key == Keys.DASH:
                     self._dash_requested = True
 
-        # Maintain legacy face vector for older systems.
-        self.face.xy = (1 if self.facing == "right" else -1, 0)
+        # Maintain legacy face vector for older systems if not overridden above.
+        if not self._use_directional_animations:
+            self.face.xy = (1 if self.facing == "right" else -1, 0)
 
     # ------------------------------------------------------------------
     def update(self, dt: float, world) -> None:
@@ -258,7 +320,7 @@ class Player(pygame.sprite.Sprite):
                 rect = self.rect
 
     def _spawn_attack_hitbox(self) -> None:
-        size = pygame.Vector2(28, 20)
+        size = pygame.Vector2(32, 24)
         rect = self._attack_rect_from_size(size)
         damage = self.attack_damage
         knockback = 180.0
@@ -270,11 +332,22 @@ class Player(pygame.sprite.Sprite):
         base_rect = self.rect
         width, height = int(size.x), int(size.y)
         rect = pygame.Rect(0, 0, width, height)
-        if self.facing == "right":
-            centerx = base_rect.centerx + base_rect.width // 2 + width // 2
+        orientation: Literal["left", "right", "up", "down"]
+        if self._use_directional_animations:
+            orientation = self.orientation
         else:
+            orientation = "right" if self.facing == "right" else "left"
+
+        if orientation == "right":
+            centerx = base_rect.centerx + base_rect.width // 2 + width // 2
+            rect.center = (centerx, base_rect.centery)
+        elif orientation == "left":
             centerx = base_rect.centerx - base_rect.width // 2 - width // 2
-        rect.center = (centerx, base_rect.centery)
+            rect.center = (centerx, base_rect.centery)
+        elif orientation == "up":
+            rect.midbottom = (base_rect.centerx, base_rect.top + 6)
+        else:  # down
+            rect.midtop = (base_rect.centerx, base_rect.bottom - 6)
         return rect
 
     def _update_hitboxes(self, ms: float, enemies) -> None:
@@ -296,7 +369,16 @@ class Player(pygame.sprite.Sprite):
                     if enemy_id in hb.hits:
                         continue
                     hb.hits.add(enemy_id)
-                    direction = pygame.Vector2(1 if self.facing == "right" else -1, 0)
+                    if self._use_directional_animations:
+                        dir_map = {
+                            "right": pygame.Vector2(1, 0),
+                            "left": pygame.Vector2(-1, 0),
+                            "up": pygame.Vector2(0, -1),
+                            "down": pygame.Vector2(0, 1),
+                        }
+                        direction = dir_map[self.orientation]
+                    else:
+                        direction = pygame.Vector2(1 if self.facing == "right" else -1, 0)
                     if hasattr(enemy, "take_damage"):
                         enemy.take_damage(hb.damage, source=self, knockback=hb.knockback, direction=direction)
 
@@ -309,7 +391,20 @@ class Player(pygame.sprite.Sprite):
         frames = self.animations.get(self.state) or self.animations["idle"]
         fps = 8.0 if self.state != "attack" else 12.0
         self.anim_timer += dt * fps
-        if frames:
+        if isinstance(frames, dict):
+            orientation = self.orientation
+            orient_frames = frames.get(orientation) or frames.get("down") or next(iter(frames.values()))
+            if not orient_frames:
+                self.image = None
+                return
+            idx = int(self.anim_timer) % len(orient_frames)
+            self.frame_index = idx
+            frame = orient_frames[idx]
+            if self._hurt_timer > 0:
+                frame = frame.copy()
+                frame.fill((255, 160, 160, 180), special_flags=pygame.BLEND_RGBA_MULT)
+            self.image = frame
+        elif frames:
             idx = int(self.anim_timer) % len(frames)
             self.frame_index = idx
             frame = frames[idx]
@@ -360,8 +455,13 @@ class Player(pygame.sprite.Sprite):
         offset = offset or pygame.Vector2(0, 0)
         if self.image is None:
             frames = self.animations.get(self.state, [])
-            frame = frames[int(self.frame_index) % len(frames)] if frames else pygame.Surface((32, 32))
-            img = pygame.transform.flip(frame, True, False) if self.facing == "right" else frame
+            if isinstance(frames, dict):
+                orient_frames = frames.get(self.orientation) or []
+                frame = orient_frames[int(self.frame_index) % len(orient_frames)] if orient_frames else pygame.Surface((int(self.size.x), int(self.size.y)))
+                img = frame
+            else:
+                frame = frames[int(self.frame_index) % len(frames)] if frames else pygame.Surface((32, 32))
+                img = pygame.transform.flip(frame, True, False) if self.facing == "right" else frame
         else:
             img = self.image
         rect = self.rect.move(-offset.x, -offset.y)
@@ -395,7 +495,17 @@ class Player(pygame.sprite.Sprite):
                     direction = self.pos - source
                 elif hasattr(source, "pos"):
                     direction = self.pos - pygame.Vector2(getattr(source, "pos"))
-            direction = direction or pygame.Vector2(1 if self.facing == "right" else -1, 0)
+            if direction is None:
+                if self._use_directional_animations:
+                    dir_map = {
+                        "right": pygame.Vector2(1, 0),
+                        "left": pygame.Vector2(-1, 0),
+                        "up": pygame.Vector2(0, -1),
+                        "down": pygame.Vector2(0, 1),
+                    }
+                    direction = dir_map[self.orientation]
+                else:
+                    direction = pygame.Vector2(1 if self.facing == "right" else -1, 0)
             if direction.length_squared():
                 self._external_velocity = direction.normalize() * knockback
                 self._external_timer = 0.18

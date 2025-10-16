@@ -7,7 +7,7 @@ import pygame
 
 from .constants import DASH_COOLDOWN_MS
 from .inventory import Inventory
-from .utils import load_pixel_font
+from .utils import load_desert_tile, load_pixel_font
 
 
 DASH_COOLDOWN = DASH_COOLDOWN_MS / 1000.0
@@ -15,17 +15,17 @@ DASH_COOLDOWN = DASH_COOLDOWN_MS / 1000.0
 
 @dataclass
 class HudPalette:
-    hp_color: tuple[int, int, int] = (214, 84, 84)
-    stamina_color: tuple[int, int, int] = (96, 186, 146)
-    bar_bg: tuple[int, int, int] = (26, 28, 36)
-    outline: tuple[int, int, int] = (235, 235, 245)
-    dash_ready: tuple[int, int, int] = (120, 200, 255)
-    dash_wait: tuple[int, int, int] = (110, 110, 140)
-    panel_bg: tuple[int, int, int] = (16, 18, 24)
-    panel_shadow: tuple[int, int, int] = (0, 0, 0)
-    state_idle: tuple[int, int, int] = (180, 180, 210)
-    state_attack: tuple[int, int, int] = (255, 150, 110)
-    state_dash: tuple[int, int, int] = (140, 200, 255)
+    hp_color: tuple[int, int, int] = (222, 82, 76)
+    stamina_color: tuple[int, int, int] = (120, 192, 138)
+    bar_bg: tuple[int, int, int] = (54, 40, 32)
+    outline: tuple[int, int, int] = (247, 226, 186)
+    dash_ready: tuple[int, int, int] = (224, 210, 120)
+    dash_wait: tuple[int, int, int] = (160, 132, 104)
+    panel_bg: tuple[int, int, int] = (78, 54, 34)
+    panel_shadow: tuple[int, int, int] = (40, 28, 18)
+    state_idle: tuple[int, int, int] = (240, 214, 174)
+    state_attack: tuple[int, int, int] = (255, 174, 120)
+    state_dash: tuple[int, int, int] = (214, 198, 255)
 
 
 class HudRenderer:
@@ -38,10 +38,17 @@ class HudRenderer:
         self.big = load_pixel_font(24)
         self._level_up_timer = 0.0
         self._level_up_text = ""
+        self._panel_texture = self._load_panel_texture()
 
     def notify_level_up(self, level: int) -> None:
         self._level_up_timer = 2.0
         self._level_up_text = f"LEVEL UP! Lv {level}"
+
+    def _load_panel_texture(self) -> Optional[pygame.Surface]:
+        try:
+            return load_desert_tile("Interface", 0, scale=2.0)
+        except FileNotFoundError:
+            return None
 
     def update(self, dt: float) -> None:
         if self._level_up_timer > 0.0:
@@ -113,6 +120,15 @@ class HudRenderer:
         shadow = rect.move(4, 6)
         pygame.draw.rect(surface, self.palette.panel_shadow, shadow, border_radius=12)
         pygame.draw.rect(surface, self.palette.panel_bg, rect, border_radius=12)
+        if self._panel_texture:
+            inner = rect.inflate(-20, -20)
+            clip = surface.get_clip()
+            surface.set_clip(inner)
+            tex = self._panel_texture
+            for x in range(inner.left, inner.right, tex.get_width()):
+                for y in range(inner.top, inner.bottom, tex.get_height()):
+                    surface.blit(tex, (x, y))
+            surface.set_clip(clip)
         pygame.draw.rect(surface, self.palette.outline, rect, 2, border_radius=12)
 
     def _draw_facing(self, surface: pygame.Surface, panel: pygame.Rect, player) -> None:
@@ -121,20 +137,33 @@ class HudRenderer:
         pygame.draw.rect(surface, self.palette.outline, area, 1, border_radius=8)
         arrow_center = area.center
         size = 18
-        if player.facing == "right":
+        orientation = getattr(player, "orientation", "right" if player.facing == "right" else "left")
+        if orientation == "right":
             points = [
                 (arrow_center[0] + size // 2, arrow_center[1]),
                 (arrow_center[0] - size // 2, arrow_center[1] - size // 2),
                 (arrow_center[0] - size // 2, arrow_center[1] + size // 2),
             ]
-        else:
+        elif orientation == "left":
             points = [
                 (arrow_center[0] - size // 2, arrow_center[1]),
                 (arrow_center[0] + size // 2, arrow_center[1] - size // 2),
                 (arrow_center[0] + size // 2, arrow_center[1] + size // 2),
             ]
+        elif orientation == "up":
+            points = [
+                (arrow_center[0], arrow_center[1] - size // 2),
+                (arrow_center[0] - size // 2, arrow_center[1] + size // 2),
+                (arrow_center[0] + size // 2, arrow_center[1] + size // 2),
+            ]
+        else:  # down
+            points = [
+                (arrow_center[0], arrow_center[1] + size // 2),
+                (arrow_center[0] - size // 2, arrow_center[1] - size // 2),
+                (arrow_center[0] + size // 2, arrow_center[1] - size // 2),
+            ]
         pygame.draw.polygon(surface, self.palette.outline, points)
-        label = self.small.render("Facing", True, self.palette.outline)
+        label = self.small.render("Direction", True, self.palette.outline)
         surface.blit(label, (area.x, area.bottom + 4))
 
     def _draw_state(self, surface: pygame.Surface, panel: pygame.Rect, player) -> None:
@@ -180,6 +209,7 @@ class InventoryOverlay:
         self.header = load_pixel_font(24)
         self._message = ""
         self._message_timer = 0.0
+        self._panel_texture = self._load_panel_texture()
 
     def update(self, dt: float) -> None:
         if self._message_timer > 0.0:
@@ -204,8 +234,17 @@ class InventoryOverlay:
         panel = pygame.Rect(36, surface.get_height() - height - 36, width, height)
         shadow = panel.move(6, 8)
         pygame.draw.rect(surface, (0, 0, 0, 160), shadow, border_radius=12)
-        pygame.draw.rect(surface, (24, 26, 34), panel, border_radius=12)
-        pygame.draw.rect(surface, (210, 210, 225), panel, 2, border_radius=12)
+        pygame.draw.rect(surface, (60, 44, 32), panel, border_radius=12)
+        if self._panel_texture:
+            inner = panel.inflate(-24, -24)
+            clip = surface.get_clip()
+            surface.set_clip(inner)
+            tex = self._panel_texture
+            for x in range(inner.left, inner.right, tex.get_width()):
+                for y in range(inner.top, inner.bottom, tex.get_height()):
+                    surface.blit(tex, (x, y))
+            surface.set_clip(clip)
+        pygame.draw.rect(surface, (240, 222, 190), panel, 2, border_radius=12)
 
         title = self.header.render("Inventory", True, (235, 235, 245))
         surface.blit(title, (panel.x + 16, panel.y + 16))
@@ -254,3 +293,9 @@ class InventoryOverlay:
         if self._message:
             msg = self.small.render(self._message, True, (255, 220, 160))
             surface.blit(msg, (panel.x + 18, panel.bottom - 28))
+
+    def _load_panel_texture(self) -> Optional[pygame.Surface]:
+        try:
+            return load_desert_tile("Interface", 0, scale=2.0)
+        except FileNotFoundError:
+            return None

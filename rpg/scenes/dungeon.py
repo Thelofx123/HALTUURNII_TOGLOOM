@@ -3,6 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Optional
 
+import random
 import pygame
 
 from .base import SceneBase
@@ -10,7 +11,7 @@ from ..constants import COL_BG, Keys
 from ..enemy import Enemy
 from ..gate import Gate
 from ..ui import HudRenderer, InventoryOverlay
-from ..utils import load_pixel_font
+from ..utils import load_desert_tile, load_pixel_font
 
 
 class SceneDungeon(SceneBase):
@@ -53,6 +54,7 @@ class SceneDungeon(SceneBase):
         self._status_message = ""
         self._status_timer = 0.0
         self._reward_granted = False
+        self._background = self._build_background()
 
     # ------------------------------------------------------------------
     def _build_bounds(self) -> None:
@@ -150,7 +152,10 @@ class SceneDungeon(SceneBase):
     def draw(self, surf: pygame.Surface) -> None:
         surf.fill(COL_BG)
         offset = pygame.Vector2(0, 0)
-        pygame.draw.rect(surf, (50, 45, 60), self.bounds.inflate(-32, -32), 2)
+        if self._background:
+            surf.blit(self._background, (self.bounds.x, self.bounds.y))
+        pygame.draw.rect(surf, (70, 62, 54), self.bounds, 6, border_radius=12)
+        pygame.draw.rect(surf, (245, 224, 180), self.bounds.inflate(-40, -40), 2, border_radius=8)
 
         for enemy in self.enemies:
             enemy.draw(surf, offset)
@@ -167,6 +172,22 @@ class SceneDungeon(SceneBase):
         if self._status_message:
             msg = self._ui_font.render(self._status_message, True, (255, 210, 140))
             surf.blit(msg, (surf.get_width() // 2 - msg.get_width() // 2, 40))
+
+    def _build_background(self) -> Optional[pygame.Surface]:
+        try:
+            tile = load_desert_tile("Tiles", 155, scale=2.0)
+            alt = load_desert_tile("Tiles", 172, scale=2.0)
+        except FileNotFoundError:
+            return None
+        surface = pygame.Surface(self.bounds.size, pygame.SRCALPHA)
+        tiles = [tile, alt]
+        rng = random.Random(2023)
+        w, h = tiles[0].get_size()
+        for y in range(0, surface.get_height(), h):
+            for x in range(0, surface.get_width(), w):
+                surf = rng.choice(tiles)
+                surface.blit(surf, (x, y))
+        return surface.convert_alpha()
 
     # ------------------------------------------------------------------
     def _leave_to_overworld(self) -> None:

@@ -12,7 +12,7 @@ from ..enemy import Enemy
 from ..gate import Gate
 from ..player import Player
 from ..ui import HudRenderer, InventoryOverlay
-from ..utils import clamp, load_pixel_font
+from ..utils import clamp, load_desert_tile, load_pixel_font
 
 
 class SceneOverworld(SceneBase):
@@ -49,6 +49,9 @@ class SceneOverworld(SceneBase):
         self._frame_events: list[pygame.event.Event] = []
         self.inventory_open = False
         self.spawn_point = pygame.Vector2(self.WORLD_SIZE.x * 0.2, self.WORLD_SIZE.y * 0.7)
+        self._terrain_surface: Optional[pygame.Surface] = None
+        self._tile_size = 48
+        self._build_terrain()
         if not self.player.alive:
             self.player.revive(self.spawn_point, full_heal=True)
         self.player.pos = pygame.Vector2(
@@ -174,17 +177,8 @@ class SceneOverworld(SceneBase):
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill(COL_BG)
         offset = self.camera
-
-        grid = 96
-        view_w, view_h = surface.get_size()
-        for x in range(0, int(self.WORLD_SIZE.x), grid):
-            x_screen = int(x - offset.x)
-            if -grid <= x_screen <= view_w + grid:
-                pygame.draw.line(surface, (40, 44, 52), (x_screen, 0), (x_screen, view_h))
-        for y in range(0, int(self.WORLD_SIZE.y), grid):
-            y_screen = int(y - offset.y)
-            if -grid <= y_screen <= view_h + grid:
-                pygame.draw.line(surface, (40, 44, 52), (0, y_screen), (view_w, y_screen))
+        if self._terrain_surface:
+            surface.blit(self._terrain_surface, (-int(offset.x), -int(offset.y)))
 
         for gate in self.gates:
             gate.draw(surface, offset)
@@ -264,3 +258,38 @@ class SceneOverworld(SceneBase):
 
         px, py = world_to_map(self.player.pos)
         pygame.draw.circle(surface, (120, 220, 220), (px, py), 5)
+
+    def _build_terrain(self) -> None:
+        world_w, world_h = int(self.WORLD_SIZE.x), int(self.WORLD_SIZE.y)
+        surface = pygame.Surface((world_w, world_h), pygame.SRCALPHA)
+        try:
+            floor_ids = [64, 65, 73, 155, 172, 173, 190, 191, 194]
+            floor_tiles = [load_desert_tile("Tiles", idx, scale=2.0) for idx in floor_ids]
+        except FileNotFoundError:
+            self._terrain_surface = None
+            return
+        tile_w = floor_tiles[0].get_width()
+        tile_h = floor_tiles[0].get_height()
+        rng = random.Random(1337)
+        for y in range(0, world_h, tile_h):
+            for x in range(0, world_w, tile_w):
+                tile = rng.choice(floor_tiles)
+                surface.blit(tile, (x, y))
+
+        decoration_ids = [63, 75, 82, 123, 184, 195, 226, 227, 228]
+        decorations: list[pygame.Surface] = []
+        for idx in decoration_ids:
+            try:
+                decorations.append(load_desert_tile("Tiles", idx, scale=2.0))
+            except FileNotFoundError:
+                continue
+        for _ in range(180):
+            if not decorations:
+                break
+            deco = rng.choice(decorations)
+            x = rng.randint(0, max(0, world_w - deco.get_width()))
+            y = rng.randint(0, max(0, world_h - deco.get_height()))
+            surface.blit(deco, (x, y))
+
+        self._terrain_surface = surface.convert_alpha()
+        self._tile_size = tile_w

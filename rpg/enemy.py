@@ -1,11 +1,11 @@
 """Enemy behaviours for overworld and dungeon scenes."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Dict, List, Optional
 
 import pygame
 
-from .utils import clamp
+from .utils import clamp, load_desert_sheet
 
 
 class Enemy(pygame.sprite.Sprite):
@@ -36,6 +36,12 @@ class Enemy(pygame.sprite.Sprite):
         self.state: str = "idle"
         self.alive = True
 
+        self.orientation: str = "down"
+        self._use_directional_sprite = False
+        self.animations: Dict[str, Dict[str, List[pygame.Surface]]] = {}
+        self._anim_timer: float = 0.0
+        self._frame_index: int = 0
+
         self._attack_cooldown = 0.6
         self._cooldown_timer = 0.0
         self._hurt_timer = 0.0
@@ -48,6 +54,8 @@ class Enemy(pygame.sprite.Sprite):
         pygame.draw.rect(self.image, color, self.image.get_rect(), border_radius=6)
         self.base_image = self.image.copy()
         self.color = color
+
+        self._load_sprite()
 
     # ------------------------------------------------------------------
     def update(
@@ -68,6 +76,7 @@ class Enemy(pygame.sprite.Sprite):
 
         to_player = player.pos - self.pos
         distance = to_player.length()
+        moving = False
         if distance <= self.attack_range:
             self.state = "idle"
             if self._cooldown_timer == 0.0:
@@ -77,13 +86,19 @@ class Enemy(pygame.sprite.Sprite):
             if distance:
                 direction = to_player / distance
                 self._move(direction, dt, collision_sprites)
+                self._set_orientation(direction)
+                moving = True
         else:
             self.state = "idle"
+            if to_player.length_squared():
+                self._set_orientation(to_player)
 
         if bounds:
             half_w = self.size.x / 2
             self.pos.x = clamp(self.pos.x, bounds.left + half_w, bounds.right - half_w)
             self.pos.y = clamp(self.pos.y, bounds.top + self.size.y, bounds.bottom)
+
+        self._update_animation(dt, moving)
 
     # ------------------------------------------------------------------
     def _update_knockback(self, dt: float, collision_sprites) -> None:
@@ -171,9 +186,19 @@ class Enemy(pygame.sprite.Sprite):
             return
         offset = offset or pygame.Vector2(0, 0)
         rect = self.rect.move(-offset.x, -offset.y)
-        image = self.base_image.copy()
-        if self._hurt_timer > 0:
-            image.fill((255, 200, 200, 160), special_flags=pygame.BLEND_RGBA_MULT)
+
+        if self._use_directional_sprite:
+            frames = self.animations.get("idle", {})
+            fallback = frames.get(self.orientation)
+            frame = fallback[self._frame_index % len(fallback)] if fallback else None
+            image = self.image or frame
+            if image is None:
+                return
+        else:
+            image = self.base_image.copy()
+            if self._hurt_timer > 0:
+                image.fill((255, 200, 200, 160), special_flags=pygame.BLEND_RGBA_MULT)
+
         surface.blit(image, rect)
 
         pct = self.hp / self.max_hp if self.max_hp else 0
@@ -197,3 +222,50 @@ class Enemy(pygame.sprite.Sprite):
             int(self.size.x),
             int(self.size.y),
         )
+
+    # ------------------------------------------------------------------
+    def _load_sprite(self) -> None:
+        try:
+            frames = load_desert_sheet("Enemies", scale=2.0)
+        except FileNotFoundError:
+            return
+        if len(frames) < 16:
+            return
+
+        directions = ["down", "left", "right", "up"]
+        walk: Dict[str, List[pygame.Surface]] = {}
+        for idx, direction in enumerate(directions):
+            walk[direction] = frames[idx * 4 : (idx + 1) * 4]
+
+        idle = {direction: [frames[idx * 4]] for idx, direction in enumerate(directions)}
+
+        self.animations = {"idle": idle, "walk": walk}
+        self._use_directional_sprite = True
+        sample = frames[0]
+        self.size = pygame.Vector2(sample.get_width(), sample.get_height())
+        self.image = idle["down"][0]
+        self._frame_index = 0
+
+    def _set_orientation(self, vector: pygame.Vector2) -> None:
+        if vector.length_squared() == 0:
+            return
+        if abs(vector.x) >= abs(vector.y):
+            self.orientation = "right" if vector.x > 0 else "left"
+        else:
+            self.orientation = "down" if vector.y > 0 else "up"
+
+    def _update_animation(self, dt: float, moving: bool) -> None:
+        if not self._use_directional_sprite:
+            return
+        state = "walk" if moving or self.state == "chase" else "idle"
+        frames = self.animations.get(state, {}).get(self.orientation)
+        if not frames:
+            return
+        fps = 6.0 if state == "walk" else 2.5
+        self._anim_timer += dt * fps
+        self._frame_index = int(self._anim_timer) % len(frames)
+        frame = frames[self._frame_index]
+        if self._hurt_timer > 0:
+            frame = frame.copy()
+            frame.fill((255, 200, 200, 150), special_flags=pygame.BLEND_RGBA_MULT)
+        self.image = frame

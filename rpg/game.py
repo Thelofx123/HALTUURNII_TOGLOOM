@@ -7,7 +7,7 @@ from .save import load_game, save_game
 class Game:
     def __init__(self):
         pygame.init()
-        pygame.display.set_caption("Solo Leveling 2D — Modular + Save")
+        pygame.display.set_caption("Desert Outpost — Top-Down Shooter")
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         self.clock = pygame.time.Clock()
         self.state = GameState()
