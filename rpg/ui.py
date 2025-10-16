@@ -228,7 +228,6 @@ class HudRenderer:
 
 
 class InventoryOverlay:
-    """Simple overlay for purchasing and equipping inventory items."""
 
     KEY_ORDER: tuple[int, ...] = (
         pygame.K_1,
