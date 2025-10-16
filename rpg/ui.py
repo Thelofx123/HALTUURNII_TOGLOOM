@@ -171,7 +171,7 @@ class HudRenderer:
         pygame.draw.rect(surface, self.palette.outline, rect, 2, border_radius=12)
 
     def _draw_facing(self, surface: pygame.Surface, panel: pygame.Rect, player) -> None:
-        area = pygame.Rect(panel.x + panel.width - 72, panel.y + 20, 48, 48)
+        area = pygame.Rect(panel.x + panel.width - (260), panel.y + (-80), 48, 48)
         pygame.draw.rect(surface, self.palette.bar_bg, area, border_radius=8)
         pygame.draw.rect(surface, self.palette.outline, area, 1, border_radius=8)
         arrow_center = area.center

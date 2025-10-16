@@ -1,23 +1,22 @@
 {
   "map": "overworld",
   "pos": [
-    1891.6378229896152,
-    1378.107048176072
+    763.1199756050974,
+    355.26442717317144
   ],
-  "hp": 124,
-  "stamina": 121.0,
+  "hp": 92,
+  "stamina": 100.0,
   "who": "JINWOO",
-  "level": 4,
-  "xp": 185,
-  "xp_to_next": 195,
+  "level": 1,
+  "xp": 0,
+  "xp_to_next": 100,
   "gold": 0,
   "inventory": {
     "owned": [
-      "shadow_dagger",
       "training_sword"
     ],
     "equipped": {
-      "weapon": "shadow_dagger"
+      "weapon": "training_sword"
     }
   }
 }
