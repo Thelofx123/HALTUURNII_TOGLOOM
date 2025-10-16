@@ -291,7 +291,6 @@ class Player(pygame.sprite.Sprite):
                 if event.key == Keys.DASH:
                     self._dash_requested = True
 
-        # Maintain legacy face vector for older systems if not overridden above.
         if not self._use_directional_animations:
             self.face.xy = (1 if self.facing == "right" else -1, 0)
 
