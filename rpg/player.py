@@ -303,12 +303,14 @@ class Player(pygame.sprite.Sprite):
             self._dash_timer = max(0.0, self._dash_timer - dt)
             if self._dash_timer == 0.0:
                 self.intangible = False
+                self._dash_vector.xy = (0, 0)
+                self.state = "walk" if self.move_intent.length_squared() else "idle"
         elif self._dash_requested:
             self._dash_requested = False
             if self._dash_cooldown == 0.0 and self.stamina >= self.dash_cost and self.state != "attack":
                 dash_vec = (
                     self.move_intent
-                    if self.move_intent.length_squared()
+                    if self.move_intent.length_squared() > 0
                     else pygame.Vector2(1 if self.facing == "right" else -1, 0)
                 )
                 if dash_vec.length_squared() == 0:
@@ -316,7 +318,6 @@ class Player(pygame.sprite.Sprite):
                 self._dash_vector = dash_vec.normalize()
                 self._dash_timer = DASH_TIME_MS / 1000.0
                 self._dash_cooldown = DASH_COOLDOWN_MS / 1000.0
-                self.intangible = True
                 self.state = "dash"
                 self.stamina = max(0.0, self.stamina - self.dash_cost)
 
@@ -324,7 +325,7 @@ class Player(pygame.sprite.Sprite):
         if self._attack_timer > 0.0:
             self._attack_timer = max(0.0, self._attack_timer - dt)
             if self._attack_timer == 0.0 and self.state == "attack":
-                self.state = "idle"
+                self.state = "walk" if self.move_intent.length_squared() else "idle"
         elif self._attack_requested and self.state != "dash":
             self._attack_requested = False
             self.state = "attack"
@@ -332,7 +333,7 @@ class Player(pygame.sprite.Sprite):
             self._spawn_attack_hitbox()
 
     def _update_movement(self, dt: float, world) -> None:
-        if self.state == "dash" and self._dash_timer > 0.0:
+        if self.state == "dash" and self._dash_timer > 0:
             displacement = self._dash_vector * _dash_speed() * dt
             self.pos += displacement
             self._clamp_to_bounds(world)
@@ -347,7 +348,7 @@ class Player(pygame.sprite.Sprite):
         if self.intangible or collision_group is None:
             total_velocity = self.vel + self._external_velocity
             self.pos += total_velocity * dt
-            self._clamp_to_bounds(world)
+            # self._clamp_to_bounds(world)
             return
 
         self._move_axis(dt, collision_group, axis="x")
@@ -445,8 +446,14 @@ class Player(pygame.sprite.Sprite):
                         enemy.take_damage(hb.damage, source=self, knockback=hb.knockback, direction=direction)
 
     def _update_state(self) -> None:
-        if self.state in {"attack", "dash"}:
+        if self._dash_timer > 0.0:
+            self.state = "dash"
             return
+        if self._attack_timer > 0.0:
+            self.state = "attack"
+            return
+        # if self.state in {"attack", "dash"}:
+        #     return
         self.state = "walk" if self.move_intent.length_squared() else "idle"
 
     def _update_animation(self, dt: float) -> None:
@@ -542,7 +549,7 @@ class Player(pygame.sprite.Sprite):
                 img = pygame.transform.flip(frame, True, False) if self.facing == "right" else frame
         else:
             img = self.image
-        rect = self.rect.move(-offset.x, -offset.y)
+        rect = self.rect.move(-offset.x + 40, -offset.y + 40)
         surface.blit(img, rect)
 
     def _clamp_to_bounds(self, world) -> None:
