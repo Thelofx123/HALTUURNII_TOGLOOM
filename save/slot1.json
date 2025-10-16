@@ -1,15 +1,15 @@
 {
-  "map": "overworld",
+  "map": "menu",
   "pos": [
-    640.0,
-    360.0
+    2660.874838503127,
+    769.4418336447544
   ],
   "hp": 100,
-  "stamina": 100.0,
-  "who": "JINWOO",
-  "level": 1,
-  "xp": 0,
-  "xp_to_next": 100,
+  "stamina": 105.0,
+  "who": "CHA",
+  "level": 2,
+  "xp": 11,
+  "xp_to_next": 125,
   "gold": 0,
   "inventory": {
     "owned": [
